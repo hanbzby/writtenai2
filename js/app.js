@@ -1,0 +1,88 @@
+/**
+ * ScholarFeedback AI — Main Application Router
+ */
+import Store from './store.js';
+import I18n from './i18n.js';
+import DB from './supabase-client.js';
+import Auth from './auth.js';
+import LoginView from './views/login.js';
+import TeacherDashboard from './views/teacher-dashboard.js';
+import StudentDashboard from './views/student-dashboard.js';
+
+const app = document.getElementById('app');
+
+// ── Toast Renderer ──
+function renderToasts() {
+  let container = document.getElementById('toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toast-container';
+    container.className = 'toast-container';
+    document.body.appendChild(container);
+  }
+  const toasts = Store.getState('toasts') || [];
+  container.innerHTML = toasts.map(t =>
+    `<div class="toast toast-${t.type}">${t.message}</div>`
+  ).join('');
+}
+
+// ── View Router ──
+function renderView(state) {
+  const view = state?.activeView || Store.getState('activeView');
+
+  // Cleanup previous view
+  if (StudentDashboard.cleanup) StudentDashboard.cleanup();
+
+  switch (view) {
+    case 'teacher':
+      app.innerHTML = TeacherDashboard.render();
+      TeacherDashboard.attachEvents();
+      if (TeacherDashboard.afterMount) TeacherDashboard.afterMount();
+      break;
+    case 'student':
+      app.innerHTML = StudentDashboard.render();
+      StudentDashboard.attachEvents();
+      
+      // Load submissions async so draft can be populated
+      const user = Store.getState('currentUser');
+      if (user) {
+        import('./services/submission-service.js').then(module => {
+          module.default.loadSubmissionsForUser(user.id).then(() => {
+            // Re-render if there are drafts/submissions loaded
+            app.innerHTML = StudentDashboard.render();
+            StudentDashboard.attachEvents();
+          });
+        });
+      }
+      break;
+    case 'login':
+    default:
+      app.innerHTML = LoginView.render();
+      LoginView.attachEvents();
+      break;
+  }
+}
+
+// ── Subscribe to state changes ──
+Store.subscribe(Store.Events.AUTH_CHANGED, renderView);
+Store.subscribe(Store.Events.LANGUAGE_CHANGED, renderView);
+Store.subscribe(Store.Events.TOAST, renderToasts);
+
+// ── Initialize ──
+async function init() {
+  DB.init();
+
+  // Setup Supabase auth state listener (token refresh, session sync)
+  Auth.setupAuthListener();
+
+  // Check for existing session (supports localStorage persistence in mock mode)
+  const session = await Auth.checkSession();
+  if (!session) {
+    renderView({ activeView: 'login' });
+  }
+  // If session exists, AUTH_CHANGED will fire and renderView will handle it
+
+  console.log('[ScholarFeedback AI] Initialized', DB.isMock() ? '(MOCK MODE)' : '(LIVE)');
+}
+
+init();
