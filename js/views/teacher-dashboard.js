@@ -95,7 +95,16 @@ async function _renderClasses(t) {
   
   // Kullanıcı bilgisi henüz sisteme oturmadıysa bir yükleme ekranı göster
   if (!user || !user.id) {
-    return `<div class="empty-state"><div class="processing-spinner"></div><div class="mt-2">Yükleniyor...</div></div>`;
+    return `
+      <div class="skeleton-wrap" style="padding: var(--sp-6);">
+        <div class="skeleton-box" style="width: 250px; height: 36px; margin-bottom: var(--sp-8);"></div>
+        <div class="class-grid">
+          <div class="skeleton-box" style="height: 140px;"></div>
+          <div class="skeleton-box" style="height: 140px;"></div>
+          <div class="skeleton-box" style="height: 140px;"></div>
+        </div>
+      </div>
+    `;
   }
 
   // Kullanıcı hazırsa sadece o öğretmene ait sınıfları getir
@@ -121,21 +130,27 @@ async function _renderClasses(t) {
         const taskCount = DB.isMock() ? DB.mock.tasks.filter(tk => tk.class_id === cls.id).length : dbTasks.filter(tk => tk.class_id === cls.id).length;
         return `
           <div class="class-card ${_activeClassId === cls.id ? 'active' : ''}" data-class-id="${cls.id}">
-            <div class="class-card-header">
-              <div class="class-card-name">${cls.class_name}</div>
+            <div class="class-card-header" style="align-items: center;">
+              <div class="class-card-name" style="font-size: 1.15rem; font-weight: 600;">${cls.class_name}</div>
               <div class="flex items-center gap-2">
-                <div class="join-code-badge" data-code="${cls.join_code}" title="Click to copy">${cls.join_code}</div>
+                <div class="join-code-badge" data-code="${cls.join_code}" title="Kodu Kopyala">${cls.join_code}</div>
                 <button class="btn btn-ghost btn-sm text-danger delete-class-btn" data-class-id="${cls.id}" title="Sınıfı Sil" style="padding: 2px 6px;">🗑️</button>
               </div>
             </div>
-            <div class="class-card-meta">
-              <span>👥 ${enrolled} ${t('teacher.students')}</span>
-              <span>📋 ${t('class.taskCount', { count: taskCount })}</span>
+            <div class="class-card-meta mt-2" style="font-size: 0.85rem; color: var(--text-muted); display: flex; gap: 16px;">
+              <span style="display: flex; align-items: center; gap: 6px;">👥 ${enrolled} Öğrenci</span>
+              <span style="display: flex; align-items: center; gap: 6px;">📋 ${taskCount} Görev</span>
             </div>
           </div>
         `;
       }).join('')}
-      ${classes.length === 0 ? `<div class="empty-state"><div class="empty-state-icon">🏫</div><div class="empty-state-text">${t('common.noData')}</div></div>` : ''}
+      ${classes.length === 0 ? `
+        <div class="empty-state" style="padding: 60px 20px; border: 1px dashed var(--border); border-radius: var(--r-lg); margin-top: var(--sp-4);">
+          <div style="font-size: 3rem; margin-bottom: 16px;">🌱</div>
+          <div class="text-lg font-bold mb-2">Henüz buralar çok sessiz...</div>
+          <p class="text-muted text-sm mb-4" style="max-width: 400px; margin: 0 auto;">İlk sınıfınızı oluşturarak öğrencilerinize eğitim serüveninde rehberlik etmeye başlayabilirsiniz.</p>
+        </div>
+      ` : ''}
     </div>
     <div id="class-modal-area"></div>
     <div id="class-detail-area"></div>
@@ -276,6 +291,7 @@ async function _renderTasks(t, tasks) {
             <div class="task-card-footer mt-4">
               <div class="task-card-meta">👥 ${classStudents.length} ${t('teacher.students')}</div>
               <div class="flex gap-2">
+                ${!deadline.expired && !task.is_published ? `<button class="btn btn-sm btn-warning end-early-btn" data-task-id="${task.id}">Süreyi Bitir</button>` : ''}
                 ${deadline.expired && !task.is_published ? `<button class="btn btn-sm btn-secondary batch-btn" data-task-id="${task.id}">${t('teacher.batchProcess')}</button>` : ''}
                 ${deadline.expired && !task.is_published ? `<button class="btn btn-sm btn-success publish-btn" data-task-id="${task.id}">${t('teacher.publish')}</button>` : ''}
               </div>
@@ -728,6 +744,23 @@ function attachEvents() {
       await QueueHandler.processTask(taskId, task);
       unsub();
       setTimeout(() => _rerender(), 500);
+    });
+  });
+
+  // End early
+  document.querySelectorAll('.end-early-btn').forEach(el => {
+    el.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!confirm("Bu görevin teslim süresini şimdi bitirmek istediğinize emin misiniz? Öğrenciler artık teslim yapamayacak.")) return;
+      const taskId = el.dataset.taskId;
+      if (DB.isMock()) {
+        const task = DB.mock.tasks.find(t => t.id === taskId);
+        if (task) task.deadline_datetime = new Date().toISOString();
+      } else {
+        await DB.query('tasks', { update: { deadline_datetime: new Date().toISOString() }, eq: ['id', taskId] });
+      }
+      Store.toast('success', 'Görev süresi sonlandırıldı.');
+      _rerender();
     });
   });
 
