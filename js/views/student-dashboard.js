@@ -13,14 +13,31 @@ let _activeTab = 'tasks';
 let _selectedTask = null;
 let _countdownInterval = null;
 
-function render() {
+async function render() {
   const t = I18n.t.bind(I18n);
   const user = Store.getState('currentUser');
-  // Stage 3: Get tasks via class enrollments
-  const myClassIds = DB.isMock()
-    ? DB.mock.class_enrollments.filter(ce => ce.student_id === user?.id).map(ce => ce.class_id)
-    : [];
-  const tasks = (DB.isMock() ? DB.mock.tasks : []).filter(t => myClassIds.includes(t.class_id));
+  
+  let myClassIds = [];
+  let tasks = [];
+  let myClasses = [];
+
+  if (DB.isMock()) {
+    myClassIds = DB.mock.class_enrollments.filter(ce => ce.student_id === user?.id).map(ce => ce.class_id);
+    tasks = DB.mock.tasks.filter(tk => myClassIds.includes(tk.class_id));
+    myClasses = myClassIds.map(id => DB.mock.classes.find(c => c.id === id)).filter(Boolean);
+  } else {
+    // Stage 3: Get tasks via class enrollments (Live mode)
+    const { data: enrolls } = await DB.query('class_enrollments', { eq: ['student_id', user.id] });
+    myClassIds = (enrolls || []).map(ce => ce.class_id);
+    
+    if (myClassIds.length > 0) {
+      const { data: allTasks } = await DB.query('tasks');
+      tasks = (allTasks || []).filter(tk => myClassIds.includes(tk.class_id));
+
+      const { data: allClasses } = await DB.query('classes');
+      myClasses = (allClasses || []).filter(c => myClassIds.includes(c.id));
+    }
+  }
 
   return `
     <div class="app-layout">
@@ -28,7 +45,7 @@ function render() {
       <div class="sidebar-overlay" id="student-sidebar-overlay"></div>
       <div class="main-content" id="student-main">
         ${_renderMobileHeader(t)}
-        ${_renderContent(t, user, tasks)}
+        ${_renderContent(t, user, tasks, myClasses)}
       </div>
     </div>
   `;
@@ -85,17 +102,13 @@ function _renderSidebar(user, t) {
   `;
 }
 
-function _renderContent(t, user, tasks) {
-  if (_activeTab === 'tasks') return _renderTasks(t, user, tasks);
+function _renderContent(t, user, tasks, myClasses) {
+  if (_activeTab === 'tasks') return _renderTasks(t, user, tasks, myClasses);
   if (_activeTab === 'feedback') return _renderFeedback(t, user, tasks);
   return '';
 }
 
-function _renderTasks(t, user, tasks) {
-  // Show enrolled classes at top
-  const myClasses = DB.isMock()
-    ? DB.mock.class_enrollments.filter(ce => ce.student_id === user?.id).map(ce => DB.mock.classes.find(c => c.id === ce.class_id)).filter(Boolean)
-    : [];
+function _renderTasks(t, user, tasks, myClasses) {
   return `
     <div class="page-header">
       <div><h1 class="page-title">${t('student.myTasks')}</h1><p class="page-subtitle">${t('app.subtitle')}</p></div>
@@ -398,19 +411,39 @@ function _showJoinModal() {
   document.getElementById('close-join-modal')?.addEventListener('click', () => { area.innerHTML = ''; });
   document.getElementById('join-modal-overlay')?.addEventListener('click', (e) => { if (e.target.id === 'join-modal-overlay') area.innerHTML = ''; });
   document.getElementById('join-code-input')?.focus();
-  document.getElementById('join-code-submit')?.addEventListener('click', () => {
+  document.getElementById('join-code-submit')?.addEventListener('click', async () => {
     const code = document.getElementById('join-code-input')?.value?.trim().toUpperCase();
     const errEl = document.getElementById('join-error');
     if (!code || code.length !== 6) { errEl.textContent = I18n.t('class.invalidCode'); errEl.style.display = 'block'; return; }
-    const cls = DB.isMock() ? DB.mock.classes.find(c => c.join_code === code) : null;
+    
+    let cls = null;
+    if (DB.isMock()) {
+      cls = DB.mock.classes.find(c => c.join_code === code);
+    } else {
+      const { data } = await DB.query('classes', { eq: ['join_code', code] });
+      cls = data?.[0] || null;
+    }
+
     if (!cls) { errEl.textContent = I18n.t('class.invalidCode'); errEl.style.display = 'block'; return; }
     const user = Store.getState('currentUser');
-    const already = DB.isMock() ? DB.mock.class_enrollments.some(ce => ce.student_id === user.id && ce.class_id === cls.id) : false;
+    
+    let already = false;
+    if (DB.isMock()) {
+      already = DB.mock.class_enrollments.some(ce => ce.student_id === user.id && ce.class_id === cls.id);
+    } else {
+      const { data } = await DB.query('class_enrollments', { match: { student_id: user.id, class_id: cls.id } });
+      already = data && data.length > 0;
+    }
+
     if (already) { errEl.textContent = I18n.t('class.alreadyJoined'); errEl.style.display = 'block'; return; }
+    
     // Enroll
     if (DB.isMock()) {
       DB.mock.class_enrollments.push({ id: 'ce-' + Date.now().toString(36), student_id: user.id, class_id: cls.id, enrolled_at: new Date().toISOString() });
+    } else {
+      await DB.query('class_enrollments', { insert: { id: crypto.randomUUID(), student_id: user.id, class_id: cls.id, enrolled_at: new Date().toISOString() } });
     }
+    
     Store.toast('success', I18n.t('class.joined') + ' — ' + cls.class_name);
     area.innerHTML = '';
     _rerender();
