@@ -14,13 +14,25 @@ let _supabase = null;
 let _mockMode = true;
 
 function init() {
-  if (SUPABASE_URL && SUPABASE_ANON && window.supabase) {
+  if (window.supabaseClient) {
+    _supabase = window.supabaseClient;
+    _mockMode = false;
+    console.log('[DB] Supabase connected via global client');
+  } else if (SUPABASE_URL && SUPABASE_ANON && window.supabase) {
     _supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
     _mockMode = false;
     console.log('[DB] Supabase connected');
   } else {
     _mockMode = true;
     console.log('[DB] Running in MOCK mode — no Supabase configured');
+    try {
+      const savedMock = localStorage.getItem('scholarfeedback_mock_db');
+      if (savedMock) {
+        Object.assign(mock, JSON.parse(savedMock));
+      }
+    } catch (e) {
+      console.error("Failed to parse mock DB", e);
+    }
   }
 }
 
@@ -102,11 +114,30 @@ const mock = {
 };
 
 /** Generic mock query helper */
-async function query(table, { select, match, eq, upsert, insert, update, del } = {}) {
+async function query(table, { select, match, eq, upsert, insert, update, del, order } = {}) {
   if (!_mockMode && _supabase) {
+    if (insert) {
+      return await _supabase.from(table).insert(insert).select();
+    }
+    if (upsert) {
+      return await _supabase.from(table).upsert(upsert).select();
+    }
+    if (update) {
+      let q = _supabase.from(table).update(update);
+      if (eq) q = q.eq(eq[0], eq[1]);
+      if (match) Object.entries(match).forEach(([k, v]) => { q = q.eq(k, v); });
+      return await q.select();
+    }
+    if (del) {
+      let q = _supabase.from(table).delete();
+      if (eq) q = q.eq(eq[0], eq[1]);
+      if (match) Object.entries(match).forEach(([k, v]) => { q = q.eq(k, v); });
+      return await q;
+    }
     let q = _supabase.from(table).select(select || '*');
     if (eq) q = q.eq(eq[0], eq[1]);
     if (match) Object.entries(match).forEach(([k, v]) => { q = q.eq(k, v); });
+    if (order) q = q.order(order[0], order[1]);
     return await q;
   }
   // Mock mode
@@ -114,16 +145,26 @@ async function query(table, { select, match, eq, upsert, insert, update, del } =
   let data = mock[table] || [];
   if (eq) data = data.filter(r => r[eq[0]] === eq[1]);
   if (match) data = data.filter(r => Object.entries(match).every(([k, v]) => r[k] === v));
+  
+  const saveMock = () => {
+    try { localStorage.setItem('scholarfeedback_mock_db', JSON.stringify(mock)); } catch (e) {}
+  };
+
   if (upsert) {
     const existing = data.findIndex(r => upsert._matchKeys?.every(k => r[k] === upsert[k]));
-    if (existing >= 0) { Object.assign(mock[table][existing], upsert); return { data: [mock[table][existing]], error: null }; }
+    if (existing >= 0) { Object.assign(mock[table][existing], upsert); saveMock(); return { data: [mock[table][existing]], error: null }; }
     mock[table].push(upsert);
+    saveMock();
     return { data: [upsert], error: null };
   }
-  if (insert) { mock[table].push(insert); return { data: [insert], error: null }; }
+  if (insert) { mock[table].push(insert); saveMock(); return { data: [insert], error: null }; }
   if (update && eq) {
     const idx = mock[table].findIndex(r => r[eq[0]] === eq[1]);
-    if (idx >= 0) { Object.assign(mock[table][idx], update); return { data: [mock[table][idx]], error: null }; }
+    if (idx >= 0) { Object.assign(mock[table][idx], update); saveMock(); return { data: [mock[table][idx]], error: null }; }
+  }
+  if (del && eq) {
+    const idx = mock[table].findIndex(r => r[eq[0]] === eq[1]);
+    if (idx >= 0) { mock[table].splice(idx, 1); saveMock(); return { data: null, error: null }; }
   }
   return { data, error: null };
 }
