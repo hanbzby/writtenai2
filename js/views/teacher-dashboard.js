@@ -11,7 +11,7 @@ let _activeTab = 'classes';
 let _selectedTask = null;
 let _activeClassId = null;
 
-function render() {
+async function render() {
   const t = I18n.t.bind(I18n);
   const user = Store.getState('currentUser');
   const tasks = DB.isMock() ? DB.mock.tasks : Store.getState('tasks');
@@ -22,7 +22,7 @@ function render() {
       <div class="sidebar-overlay" id="teacher-sidebar-overlay"></div>
       <div class="main-content" id="teacher-main">
         ${_renderMobileHeader(t)}
-        ${_renderContent(t, tasks)}
+        ${await _renderContent(t, tasks)}
       </div>
     </div>
   `;
@@ -82,17 +82,17 @@ function _renderSidebar(user, t) {
   `;
 }
 
-function _renderContent(t, tasks) {
-  if (_activeTab === 'classes') return _renderClasses(t);
+async function _renderContent(t, tasks) {
+  if (_activeTab === 'classes') return await _renderClasses(t);
   if (_activeTab === 'tasks') return _renderTasks(t, tasks);
   if (_activeTab === 'submissions') return _renderSubmissions(t, tasks);
   if (_activeTab === 'analytics') return _renderAnalytics(t);
   return '';
 }
 
-function _renderClasses(t) {
+async function _renderClasses(t) {
   const user = Store.getState('currentUser');
-  const classes = DB.isMock() ? DB.mock.classes.filter(c => c.teacher_id === user?.id) : [];
+  const { data: classes = [] } = await DB.query('classes', { eq: ['teacher_id', user?.id] });
   return `
     <div class="page-header">
       <div><h1 class="page-title">${t('class.title')}</h1><p class="page-subtitle">${t('app.subtitle')}</p></div>
@@ -661,10 +661,10 @@ function _attachModalEvents() {
   });
 }
 
-function _rerender() {
+async function _rerender() {
   const app = document.getElementById('app');
   if (app) {
-    app.innerHTML = render();
+    app.innerHTML = await render();
     attachEvents();
     _renderCharts();
   }
