@@ -9,24 +9,25 @@ let _saveTimeout = null;
 
 const SubmissionService = {
   async loadSubmissionsForUser() {
+    if (!window.supabaseClient) { console.warn('Veritabanı bağlantısı kurulamadı'); return []; }
     Store.dispatch(Store.Events.LOADING, true);
     
     // Use dynamic user from Supabase as requested
-    const { data: { user }, error: authError } = await DB.client().auth.getUser();
+    const { data: { user }, error: authError } = await window.supabaseClient.auth.getUser();
     if (authError || !user) {
        Store.dispatch(Store.Events.LOADING, false);
        return [];
     }
     const userId = user.id;
 
-    const { data: subsData, error: subsError } = await DB.query('submissions', { eq: ['student_id', userId] });
+    const { data: subsData, error: subsError } = await window.supabaseClient.from('submissions').select('*').eq('student_id', userId);
     
     if (!subsError && subsData) {
       Store.dispatch(Store.Events.SUBMISSIONS_LOADED, { submissions: subsData });
       
       const subIds = subsData.map(s => s.id);
       if (subIds.length > 0) {
-        const { data: reportsData } = await DB.client().from('feedback_reports').select('*').in('submission_id', subIds);
+        const { data: reportsData } = await window.supabaseClient.from('feedback_reports').select('*').in('submission_id', subIds);
         if (reportsData) {
           Store.dispatch(Store.Events.FEEDBACK_READY, { feedbackReports: reportsData });
         }
@@ -38,6 +39,7 @@ const SubmissionService = {
   },
 
   async autoSaveDraft(taskId, content) {
+    if (!window.supabaseClient) return;
     const user = Store.getState('currentUser');
     if (!user) return;
 
@@ -52,23 +54,9 @@ const SubmissionService = {
       updated_at: new Date().toISOString()
     };
 
-    if (DB.isMock()) {
-      const existingIdx = DB.mock.submissions.findIndex(s => s.task_id === taskId && s.student_id === user.id);
-      if (existingIdx >= 0) {
-        if (DB.mock.submissions[existingIdx].status === 'SUBMITTED') return; // Don't overwrite submitted
-        Object.assign(DB.mock.submissions[existingIdx], sub);
-      } else {
-        sub.id = 'sub-' + Date.now().toString(36);
-        sub.submitted_at = new Date().toISOString();
-        DB.mock.submissions.push(sub);
-      }
-      this.loadSubmissionsForUser(user.id);
-      return;
-    }
-
     // Real Supabase auto-save
     // We first check if a submission exists for this task & user
-    const { data: existing } = await DB.client().from('submissions')
+    const { data: existing } = await window.supabaseClient.from('submissions')
       .select('id, status')
       .eq('task_id', taskId)
       .eq('student_id', user.id)
@@ -78,14 +66,14 @@ const SubmissionService = {
 
     if (existing) {
       sub.id = existing.id;
-      await DB.client().from('submissions').update(sub).eq('id', existing.id);
+      await window.supabaseClient.from('submissions').update(sub).eq('id', existing.id);
     } else {
       sub.submitted_at = new Date().toISOString();
-      await DB.client().from('submissions').insert([sub]);
+      await window.supabaseClient.from('submissions').insert([sub]);
     }
     
     // Refresh local store silently
-    const { data } = await DB.query('submissions', { eq: ['student_id', user.id] });
+    const { data } = await window.supabaseClient.from('submissions').select('*').eq('student_id', user.id);
     if (data) Store.dispatch(Store.Events.SUBMISSIONS_LOADED, { submissions: data });
   },
 
@@ -99,6 +87,7 @@ const SubmissionService = {
   },
   
   async submitFinal(taskId, content) {
+    if (!window.supabaseClient) { alert('Veritabanı bağlantısı kurulamadı'); return null; }
     const user = Store.getState('currentUser');
     if (!user) return null;
     
@@ -113,29 +102,17 @@ const SubmissionService = {
       updated_at: new Date().toISOString()
     };
 
-    if (DB.isMock()) {
-      const existingIdx = DB.mock.submissions.findIndex(s => s.task_id === taskId && s.student_id === user.id);
-      if (existingIdx >= 0) {
-        Object.assign(DB.mock.submissions[existingIdx], sub);
-      } else {
-        sub.id = 'sub-' + Date.now().toString(36);
-        sub.submitted_at = new Date().toISOString();
-        DB.mock.submissions.push(sub);
-      }
-      return DB.mock.submissions.find(s => s.task_id === taskId && s.student_id === user.id);
-    }
-
-    const { data: existing } = await DB.client().from('submissions')
+    const { data: existing } = await window.supabaseClient.from('submissions')
       .select('id')
       .eq('task_id', taskId)
       .eq('student_id', user.id)
       .single();
 
     if (existing) {
-      await DB.client().from('submissions').update(sub).eq('id', existing.id);
+      await window.supabaseClient.from('submissions').update(sub).eq('id', existing.id);
     } else {
       sub.submitted_at = new Date().toISOString();
-      await DB.client().from('submissions').insert([sub]);
+      await window.supabaseClient.from('submissions').insert([sub]);
     }
     
     await this.loadSubmissionsForUser(user.id);

@@ -10,8 +10,8 @@ const SESSION_KEY = 'scholarfeedback_session';
 
 const Auth = {
   async login(email, password) {
-    if (!DB.client()) throw new Error("Supabase client not initialized.");
-    const { data, error } = await DB.client().auth.signInWithPassword({ email, password });
+    if (!window.supabaseClient) { alert('Veritabanı bağlantısı kurulamadı'); return; }
+    const { data, error } = await window.supabaseClient.auth.signInWithPassword({ email, password });
     if (error) throw new Error(error.message);
     
     // Ensure profile exists in DB
@@ -21,8 +21,8 @@ const Auth = {
   },
 
   async register(email, password, fullName, role) {
-    if (!DB.client()) throw new Error("Supabase client not initialized.");
-    const { data, error } = await DB.client().auth.signUp({
+    if (!window.supabaseClient) { alert('Veritabanı bağlantısı kurulamadı'); return; }
+    const { data, error } = await window.supabaseClient.auth.signUp({
       email, password,
       options: { data: { full_name: fullName, role: role || 'STUDENT' } }
     });
@@ -37,9 +37,8 @@ const Auth = {
   },
 
   async logout() {
-    if (DB.client()) {
-      await DB.client().auth.signOut();
-    }
+    if (!window.supabaseClient) { alert('Veritabanı bağlantısı kurulamadı'); return; }
+    await window.supabaseClient.auth.signOut();
     try { localStorage.removeItem(SESSION_KEY); } catch {}
     Store.dispatch(Store.Events.AUTH_CHANGED, {
       currentUser: null, isAuthenticated: false, activeView: 'login',
@@ -52,10 +51,10 @@ const Auth = {
    * In mock mode, reads from localStorage for session persistence.
    */
   async checkSession() {
-    if (!DB.client()) return null;
+    if (!window.supabaseClient) { console.warn('Veritabanı bağlantısı kurulamadı'); return null; }
 
     // Real Supabase session check using getUser for extra security
-    const { data: { user }, error } = await DB.client().auth.getUser();
+    const { data: { user }, error } = await window.supabaseClient.auth.getUser();
     if (user) {
       const profile = await this._fetchProfile(user.id);
       this._setUser(profile);
@@ -69,8 +68,8 @@ const Auth = {
    * Called once at init to handle token refresh and session changes.
    */
   setupAuthListener() {
-    if (!DB.client()) return;
-    DB.client().auth.onAuthStateChange(async (event, session) => {
+    if (!window.supabaseClient) { console.warn('Veritabanı bağlantısı kurulamadı'); return; }
+    window.supabaseClient.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session?.user) {
         const profile = await this._fetchProfile(session.user.id);
         this._setUser(profile);
@@ -86,7 +85,7 @@ const Auth = {
 
   // ── Internal ──
   async _fetchProfile(userId) {
-    const { data } = await DB.query('profiles', { eq: ['id', userId] });
+    const { data } = await window.supabaseClient.from('profiles').select('*').eq('id', userId);
     return data?.[0] || null;
   },
 
@@ -99,7 +98,7 @@ const Auth = {
         role: role || user.user_metadata?.role || 'STUDENT',
         language_pref: 'tr'
       };
-      const { data, error } = await DB.client().from('profiles').upsert(newProfile).select();
+      const { data, error } = await window.supabaseClient.from('profiles').upsert(newProfile).select();
       if (!error && data?.length) profile = data[0];
     }
     return profile;

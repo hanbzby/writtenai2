@@ -3,7 +3,6 @@
  */
 import Store from './store.js';
 import I18n from './i18n.js';
-import DB from './supabase-client.js';
 import Auth from './auth.js';
 import LoginView from './views/login.js';
 import TeacherDashboard from './views/teacher-dashboard.js';
@@ -70,8 +69,6 @@ Store.subscribe(Store.Events.TOAST, renderToasts);
 
 // ── Initialize ──
 async function init() {
-  DB.init();
-
   // Setup Supabase auth state listener (token refresh, session sync)
   Auth.setupAuthListener();
 
