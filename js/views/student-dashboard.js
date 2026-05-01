@@ -122,7 +122,12 @@ function _renderTasks(t, user, tasks, myClasses) {
       <div class="mb-6">
         <div class="text-xs text-muted mb-2">${t('class.myClasses')}</div>
         <div class="flex gap-2" style="flex-wrap:wrap">
-          ${myClasses.map(c => `<span class="badge badge-info">🏫 ${c.class_name}</span>`).join('')}
+          ${myClasses.map(c => `
+            <span class="badge badge-info" style="display:inline-flex; align-items:center; gap:4px;">
+              🏫 ${c.class_name}
+              <button class="btn btn-ghost btn-sm leave-class-btn" data-class-id="${c.id}" style="padding:0; height:auto; min-height:auto; margin-left:4px;" title="Sınıftan Ayrıl">✖</button>
+            </span>
+          `).join('')}
         </div>
       </div>
     ` : ''}
@@ -306,6 +311,23 @@ function attachEvents() {
   });
   document.getElementById('join-class-sidebar-btn')?.addEventListener('click', _showJoinModal);
   document.getElementById('join-class-header-btn')?.addEventListener('click', _showJoinModal);
+
+  // Leave class
+  document.querySelectorAll('.leave-class-btn').forEach(el => {
+    el.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!confirm('Bu sınıftan ayrılmak istediğinize emin misiniz? Sınıftaki görevler silinmeyecektir ancak sınıf sayfanızdan kaybolacaktır.')) return;
+      const classId = el.dataset.classId;
+      const user = Store.getState('currentUser');
+      if (DB.isMock()) {
+        DB.mock.class_enrollments = DB.mock.class_enrollments.filter(ce => !(ce.class_id === classId && ce.student_id === user?.id));
+      } else {
+        await DB.query('class_enrollments', { del: true, match: { class_id: classId, student_id: user?.id } });
+      }
+      Store.toast('success', 'Sınıftan ayrıldınız.');
+      _rerender();
+    });
+  });
 
   // File upload
   document.querySelectorAll('.file-upload').forEach(el => {

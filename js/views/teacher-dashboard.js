@@ -100,6 +100,16 @@ async function _renderClasses(t) {
 
   // Kullanıcı hazırsa sadece o öğretmene ait sınıfları getir
   const { data: classes = [] } = await DB.query('classes', { eq: ['teacher_id', user.id] });
+  
+  let enrollments = [];
+  let dbTasks = [];
+  if (!DB.isMock() && classes.length > 0) {
+    const { data: eData } = await DB.query('class_enrollments');
+    enrollments = eData || [];
+    const { data: tData } = await DB.query('tasks');
+    dbTasks = tData || [];
+  }
+
   return `
     <div class="page-header">
       <div><h1 class="page-title">${t('class.title')}</h1><p class="page-subtitle">${t('app.subtitle')}</p></div>
@@ -107,13 +117,16 @@ async function _renderClasses(t) {
     </div>
     <div class="class-grid">
       ${classes.map(cls => {
-        const enrolled = DB.isMock() ? DB.mock.class_enrollments.filter(e => e.class_id === cls.id).length : 0;
-        const taskCount = DB.isMock() ? DB.mock.tasks.filter(tk => tk.class_id === cls.id).length : 0;
+        const enrolled = DB.isMock() ? DB.mock.class_enrollments.filter(e => e.class_id === cls.id).length : enrollments.filter(e => e.class_id === cls.id).length;
+        const taskCount = DB.isMock() ? DB.mock.tasks.filter(tk => tk.class_id === cls.id).length : dbTasks.filter(tk => tk.class_id === cls.id).length;
         return `
           <div class="class-card ${_activeClassId === cls.id ? 'active' : ''}" data-class-id="${cls.id}">
             <div class="class-card-header">
               <div class="class-card-name">${cls.class_name}</div>
-              <div class="join-code-badge" data-code="${cls.join_code}" title="Click to copy">${cls.join_code}</div>
+              <div class="flex items-center gap-2">
+                <div class="join-code-badge" data-code="${cls.join_code}" title="Click to copy">${cls.join_code}</div>
+                <button class="btn btn-ghost btn-sm text-danger delete-class-btn" data-class-id="${cls.id}" title="Sınıfı Sil" style="padding: 2px 6px;">🗑️</button>
+              </div>
             </div>
             <div class="class-card-meta">
               <span>👥 ${enrolled} ${t('teacher.students')}</span>
@@ -298,7 +311,7 @@ function _renderAnalytics(t) {
   `;
 }
 
-function _renderTaskModal(t) {
+function _renderTaskModal(t, classes = []) {
   return `
     <div class="modal-overlay" id="task-modal-overlay">
       <div class="modal">
@@ -328,7 +341,7 @@ function _renderTaskModal(t) {
             <div class="form-group" style="flex:1">
               <label class="form-label">${t('class.selectClass')}</label>
               <select id="tf-class" class="select">
-                ${(DB.isMock() ? DB.mock.classes.filter(c => c.teacher_id === Store.getState('currentUser')?.id) : []).map(c =>
+                ${classes.map(c =>
                   `<option value="${c.id}" ${c.id === _activeClassId ? 'selected' : ''}>${c.class_name}</option>`
                 ).join('')}
               </select>
@@ -539,6 +552,23 @@ function attachEvents() {
     el.addEventListener('click', (e) => { e.stopPropagation(); navigator.clipboard?.writeText(el.dataset.code); Store.toast('success', I18n.t('class.codeCopied')); });
   });
 
+  // Delete class
+  document.querySelectorAll('.delete-class-btn').forEach(el => {
+    el.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!confirm('Bu sınıfı silmek istediğinize emin misiniz?')) return;
+      const classId = el.dataset.classId;
+      if (DB.isMock()) {
+        DB.mock.classes = DB.mock.classes.filter(c => c.id !== classId);
+      } else {
+        await DB.query('classes', { del: true, eq: ['id', classId] });
+      }
+      Store.toast('success', 'Sınıf silindi');
+      if (_activeClassId === classId) _activeClassId = null;
+      _rerender();
+    });
+  });
+
   // Click class card -> show detail
   document.querySelectorAll('.class-card[data-class-id]').forEach(el => {
     el.addEventListener('click', () => {
@@ -556,9 +586,19 @@ function attachEvents() {
   });
 
   // New task
-  document.getElementById('new-task-btn')?.addEventListener('click', () => {
+  document.getElementById('new-task-btn')?.addEventListener('click', async () => {
     const area = document.getElementById('task-modal-area');
-    if (area) { area.innerHTML = _renderTaskModal(I18n.t.bind(I18n)); _attachModalEvents(); }
+    if (area) { 
+      let classes = [];
+      if (DB.isMock()) {
+         classes = DB.mock.classes.filter(c => c.teacher_id === Store.getState('currentUser')?.id);
+      } else {
+         const { data } = await DB.query('classes', { eq: ['teacher_id', Store.getState('currentUser')?.id] });
+         classes = data || [];
+      }
+      area.innerHTML = _renderTaskModal(I18n.t.bind(I18n), classes); 
+      _attachModalEvents(); 
+    }
   });
 
   // Batch process
