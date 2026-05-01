@@ -495,7 +495,7 @@ function attachEvents() {
 
       try {
         // Supabase'e gerçek kayıt isteği
-        const { error } = await DB.client.from('classes').insert([cls]);
+        const { error } = await DB.query('classes', { insert: cls });
         
         if (error) throw error;
 
