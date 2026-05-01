@@ -102,11 +102,19 @@ const T = {
   'class.invalidCode':    { tr: 'Geçersiz katılım kodu', en: 'Invalid join code' },
   'class.alreadyJoined':  { tr: 'Bu sınıfa zaten kayıtlısınız', en: 'You are already enrolled in this class' },
   'class.students':       { tr: 'Kayıtlı Öğrenciler', en: 'Enrolled Students' },
-  'class.taskCount':      { tr: '{count} Görev', en: '{count} Tasks' },
-  'class.selectClass':    { tr: 'Sınıf Seçin', en: 'Select Class' },
-  'class.allClasses':     { tr: 'Tüm Sınıflar', en: 'All Classes' },
-  'class.myClasses':      { tr: 'Sınıflarım', en: 'My Classes' },
   'class.codeCopied':     { tr: 'Kod kopyalandı!', en: 'Code copied!' },
+  'class.delete':         { tr: 'Sınıfı Sil', en: 'Delete Class' },
+  'class.leave':          { tr: 'Sınıftan Ayrıl', en: 'Leave Class' },
+  'class.deleteConfirm':  { tr: 'Bu sınıfı silmek istediğinize emin misiniz?', en: 'Are you sure you want to delete this class?' },
+  'class.leaveConfirm':   { tr: 'Bu sınıftan ayrılmak istediğinize emin misiniz?', en: 'Are you sure you want to leave this class?' },
+  'teacher.viewReport':   { tr: 'Raporu Gör', en: 'View Report' },
+  'teacher.viewEssay':    { tr: 'Ödevi Gör', en: 'View Essay' },
+  'teacher.processing':   { tr: 'İşleniyor...', en: 'Processing...' },
+  'teacher.overrideGrade':{ tr: 'Notu Düzenle', en: 'Edit Grade' },
+  'teacher.batchProcess': { tr: 'Toplu Değerlendirme', en: 'Batch Processing' },
+  'report.studentEssay':  { tr: 'Öğrenci Ödevi', en: 'Student Essay' },
+  'report.integrityHeatmap': { tr: 'İntihal & AI Analizi (Isı Haritası)', en: 'Plagiarism & AI Analysis (Heatmap)' },
+  'report.aiFeedback':    { tr: 'Yapay Zeka Değerlendirmesi', en: 'AI Evaluation' },
 };
 let _lang = 'tr';
 const I18n = {

@@ -542,14 +542,14 @@ function _renderReportModal(sub, report, t, profiles = []) {
         <div class="flex flex-col gap-6">
           <!-- Student Essay Section -->
           <div class="essay-detail-section">
-            <h4 class="mb-2 flex items-center gap-2">📄 Öğrenci Ödevi <span class="text-xs text-muted font-normal">(${sub.word_count} kelime)</span></h4>
+            <h4 class="mb-2 flex items-center gap-2">📄 ${t('report.studentEssay')} <span class="text-xs text-muted font-normal">(${sub.word_count} kelime)</span></h4>
             <div class="card" style="padding:20px; background: var(--bg-app); border: 1px solid var(--border); font-size: 0.95rem; line-height: 1.7; white-space: pre-wrap; max-height: 300px; overflow-y: auto;">${sub.content}</div>
           </div>
 
           <!-- Integrity Heatmap (if segments exist) -->
           ${segments.length > 0 ? `
             <div>
-              <h4 class="mb-2">🚨 İntihal & AI Analizi (Isı Haritası)</h4>
+              <h4 class="mb-2">🚨 ${t('report.integrityHeatmap')}</h4>
               <div class="card" style="padding:16px; background: var(--bg-card);">
                 <div class="heatmap-text" style="font-size: 0.9rem;">
                   ${_renderHeatmapText(sub.content, segments)}
@@ -560,7 +560,7 @@ function _renderReportModal(sub, report, t, profiles = []) {
 
           <!-- AI Feedback Section -->
           <div>
-            <h4 class="mb-2">🤖 Yapay Zeka Değerlendirmesi</h4>
+            <h4 class="mb-2">🤖 ${t('report.aiFeedback')}</h4>
             <div class="card feedback-content" id="feedback-md-content" style="padding:24px; background: var(--bg-card); border-left: 4px solid var(--accent);">
               ${report?.ai_feedback_markdown || t('feedback.pending')}
             </div>
@@ -721,16 +721,16 @@ function attachEvents() {
   document.querySelectorAll('.delete-class-btn').forEach(el => {
     el.addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (!confirm('Bu sınıfı silmek istediğinize emin misiniz?')) return;
+      if (!confirm(I18n.t('class.deleteConfirm'))) return;
       const classId = el.dataset.classId;
       if (DB.isMock()) {
         DB.mock.classes = DB.mock.classes.filter(c => c.id !== classId);
       } else {
         await DB.query('classes', { del: true, eq: ['id', classId] });
       }
-      Store.toast('success', 'Sınıf silindi');
+      Store.toast('success', I18n.t('class.delete') + ' ✓');
       if (_activeClassId === classId) _activeClassId = null;
-      _rerender();
+      refreshData().then(() => _rerender());
     });
   });
 

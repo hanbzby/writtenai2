@@ -292,6 +292,24 @@ function _renderFeedback(t, user, tasks) {
 }
 
 function attachEvents() {
+  // Leave class
+  document.querySelectorAll('.leave-class-btn').forEach(el => {
+    el.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const classId = el.dataset.classId;
+      if (!confirm(I18n.t('class.leaveConfirm'))) return;
+      
+      const user = Store.getState('currentUser');
+      if (DB.isMock()) {
+        DB.mock.class_enrollments = DB.mock.class_enrollments.filter(ce => !(ce.student_id === user.id && ce.class_id === classId));
+      } else {
+        await DB.query('class_enrollments', { del: true, match: { student_id: user.id, class_id: classId } });
+      }
+      Store.toast('success', I18n.t('class.leave') + ' ✓');
+      refreshData().then(() => _rerender());
+    });
+  });
+
   // Tab navigation
   document.querySelectorAll('.sidebar-link[data-tab]').forEach(el => {
     el.addEventListener('click', () => {
