@@ -330,6 +330,16 @@ async function _renderSubmissions(t, tasks) {
     const { data: dbProfiles } = await DB.query('profiles');
     profiles = dbProfiles || [];
   }
+  
+  const teacherTaskIds = tasks.map(t => t.id);
+  const relevantSubs = subs.filter(s => teacherTaskIds.includes(s.task_id));
+
+  // Group by task
+  const grouped = {};
+  relevantSubs.forEach(s => {
+    if (!grouped[s.task_id]) grouped[s.task_id] = [];
+    grouped[s.task_id].push(s);
+  });
 
   return `
     <div class="page-header">
@@ -338,89 +348,137 @@ async function _renderSubmissions(t, tasks) {
     <div class="disclaimer mb-4">
       ⚠️ ${t('integrity.disclaimer')}
     </div>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>${t('auth.fullName')}</th>
-            <th>${t('teacher.tasks')}</th>
-            <th>${t('common.status')}</th>
-            <th>Kelime Sayısı</th>
-            <th>${t('integrity.riskScore')}</th>
-            <th>${t('feedback.grade')}</th>
-            <th>${t('common.actions')}</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${subs.map(sub => {
-            const student = profiles.find(p => p.id === sub.student_id);
-            const task = tasks.find(t => t.id === sub.task_id);
-            const report = reports.find(r => r.submission_id === sub.id);
-            const risk = report ? Math.round((report.plagiarism_score + report.ai_probability_score) / 2) : null;
-            const isHighRisk = risk !== null && (report.plagiarism_score > 20 || report.ai_probability_score > 80);
-            const statusBadge = sub.status === 'GRADED' ? 'badge-success' : sub.status === 'PROCESSING' ? 'badge-warning' : sub.status === 'PUBLISHED' ? 'badge-info' : 'badge-neutral';
-            return `
-              <tr>
-                <td class="submission-name">${student?.full_name || 'Unknown'}</td>
-                <td class="text-sm text-muted">${task?.title || ''}</td>
-                <td><span class="badge ${statusBadge}">${t('status.' + sub.status)}</span></td>
-                <td>${sub.word_count || 0}</td>
-                <td>
-                  ${risk !== null ? `<span class="badge ${isHighRisk ? 'badge-risk' : 'badge-neutral'}">${risk}%${isHighRisk ? ' ⚠' : ''}</span>` : '<span class="text-muted">—</span>'}
-                </td>
-                <td class="font-mono font-bold">${report?.final_grade ?? '—'}</td>
-                <td>
-                  ${report ? `<button class="btn btn-ghost btn-sm view-report-btn" data-sub-id="${sub.id}">🔍</button>` : ''}
-                </td>
-              </tr>
-            `;
-          }).join('')}
-          ${subs.length === 0 ? `<tr><td colspan="7" class="text-center text-muted" style="padding:32px">${t('common.noData')}</td></tr>` : ''}
-        </tbody>
-      </table>
-    </div>
+    
+    ${Object.keys(grouped).length === 0 ? `
+      <div class="empty-state">
+        <div class="empty-state-icon">📥</div>
+        <div class="empty-state-text">Henüz hiç teslimat yapılmamış.</div>
+      </div>
+    ` : Object.entries(grouped).map(([taskId, taskSubs]) => {
+      const task = tasks.find(tk => tk.id === taskId);
+      return `
+        <div class="task-submission-group mb-8">
+          <h3 class="mb-3 flex items-center gap-2" style="font-size: 1.1rem; color: var(--accent);">
+            📋 ${task?.title || 'Bilinmeyen Görev'}
+          </h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>${t('auth.fullName')}</th>
+                  <th>${t('common.status')}</th>
+                  <th>Kelime Sayısı</th>
+                  <th>İntihal / AI</th>
+                  <th>${t('feedback.grade')}</th>
+                  <th>${t('common.actions')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${taskSubs.map(sub => {
+                  const student = profiles.find(p => p.id === sub.student_id);
+                  const report = reports.find(r => r.submission_id === sub.id);
+                  const statusBadge = sub.status === 'GRADED' ? 'badge-success' : sub.status === 'PROCESSING' ? 'badge-warning' : sub.status === 'PUBLISHED' ? 'badge-info' : 'badge-neutral';
+                  return `
+                    <tr>
+                      <td class="submission-name">${student?.full_name || 'Unknown'}</td>
+                      <td><span class="badge ${statusBadge}">${t('status.' + sub.status)}</span></td>
+                      <td>${sub.word_count || 0}</td>
+                      <td>
+                        ${report ? `
+                          <div class="flex flex-col gap-1">
+                            <span class="text-xs ${report.plagiarism_score > 20 ? 'text-danger font-bold' : 'text-muted'}">P: %${report.plagiarism_score}</span>
+                            <span class="text-xs ${report.ai_probability_score > 80 ? 'text-danger font-bold' : 'text-muted'}">AI: %${report.ai_probability_score}</span>
+                          </div>
+                        ` : '<span class="text-muted">—</span>'}
+                      </td>
+                      <td class="font-mono font-bold">${report?.final_grade ?? '—'}</td>
+                      <td>
+                        <div class="flex gap-1">
+                          ${report ? `<button class="btn btn-ghost btn-sm view-report-btn" data-sub-id="${sub.id}" title="Raporu Gör">🔍</button>` : ''}
+                          <button class="btn btn-ghost btn-sm view-essay-btn" data-sub-id="${sub.id}" title="Ödevi Gör">📄</button>
+                        </div>
+                      </td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }).join('')}
     <div id="report-modal-area"></div>
   `;
 }
 
 async function _renderAnalytics(t) {
   let reports = [];
+  let subs = [];
+  let tasks = [];
+  let classes = [];
+
   if (DB.isMock()) {
     reports = DB.mock.feedback_reports;
+    subs = DB.mock.submissions;
+    tasks = DB.mock.tasks;
+    classes = DB.mock.classes.filter(c => c.teacher_id === Store.getState('currentUser')?.id);
   } else {
-    const { data } = await DB.query('feedback_reports');
-    reports = data || [];
+    const { data: rData } = await DB.query('feedback_reports');
+    reports = rData || [];
+    const { data: sData } = await DB.query('submissions');
+    subs = sData || [];
+    const { data: tData } = await DB.query('tasks');
+    tasks = tData || [];
+    const { data: cData } = await DB.query('classes', { eq: ['teacher_id', Store.getState('currentUser')?.id] });
+    classes = cData || [];
   }
+
+  // Group reports by class
+  const classAnalytics = classes.map(cls => {
+    const classTasks = tasks.filter(tk => tk.class_id === cls.id);
+    const classTaskIds = classTasks.map(tk => tk.id);
+    const classSubs = subs.filter(s => classTaskIds.includes(s.task_id));
+    const classSubIds = classSubs.map(s => s.id);
+    const classReports = reports.filter(r => classSubIds.includes(r.submission_id));
+    
+    return { class: cls, reports: classReports };
+  }).filter(group => group.reports.length > 0);
+
   return `
     <div class="page-header">
       <div><h1 class="page-title">${t('teacher.analytics')}</h1></div>
     </div>
-    ${reports.length === 0 ? `
+    ${classAnalytics.length === 0 ? `
       <div class="empty-state">
         <div class="empty-state-icon">📊</div>
-        <div class="empty-state-text">${t('common.noData')}<br><span class="text-xs text-muted">Run batch processing to see analytics</span></div>
+        <div class="empty-state-text">${t('common.noData')}<br><span class="text-xs text-muted">Sınıf analizi için önce ödevleri notlandırmalısınız.</span></div>
       </div>
-    ` : `
-      <div class="stats-row">
-        <div class="stat-card">
-          <div class="stat-label">Avg Grade</div>
-          <div class="stat-value text-accent">${Math.round(reports.reduce((a, r) => a + (r.final_grade || 0), 0) / reports.length)}</div>
+    ` : classAnalytics.map(({ class: cls, reports: rps }) => `
+      <div class="class-analytics-section mb-12">
+        <h2 class="mb-4 flex items-center gap-2" style="font-size: 1.4rem; border-bottom: 2px solid var(--border); padding-bottom: 8px;">
+          🏫 ${cls.class_name} <span class="text-xs text-muted font-normal">(${rps.length} Rapor)</span>
+        </h2>
+        <div class="stats-row mb-6">
+          <div class="stat-card">
+            <div class="stat-label">Ortalama Not</div>
+            <div class="stat-value text-accent">${Math.round(rps.reduce((a, r) => a + (r.final_grade || 0), 0) / rps.length)}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Ort. İntihal</div>
+            <div class="stat-value" style="color:var(--warning-light)">%${Math.round(rps.reduce((a, r) => a + (r.plagiarism_score || 0), 0) / rps.length)}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Ort. AI Olasılığı</div>
+            <div class="stat-value" style="color:var(--cyan-light)">%${Math.round(rps.reduce((a, r) => a + (r.ai_probability_score || 0), 0) / rps.length)}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Yüksek Risk</div>
+            <div class="stat-value text-danger">${rps.filter(r => r.risk_flag).length}</div>
+          </div>
         </div>
-        <div class="stat-card">
-          <div class="stat-label">Avg Plagiarism</div>
-          <div class="stat-value" style="color:var(--warning-light)">${Math.round(reports.reduce((a, r) => a + (r.plagiarism_score || 0), 0) / reports.length)}%</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Avg AI Probability</div>
-          <div class="stat-value" style="color:var(--cyan-light)">${Math.round(reports.reduce((a, r) => a + (r.ai_probability_score || 0), 0) / reports.length)}%</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">High Risk</div>
-          <div class="stat-value text-danger">${reports.filter(r => r.risk_flag).length}</div>
-        </div>
+        <div class="card"><canvas id="chart-${cls.id}" height="300"></canvas></div>
       </div>
-      <div class="card"><canvas id="analytics-chart" height="300"></canvas></div>
-    `}
+    `).join('')}
   `;
 }
 
@@ -495,18 +553,7 @@ function _renderTaskModal(t, classes = []) {
   `;
 }
 
-function _renderReportModal(sub, report, t) {
-  let profiles = [];
-  if (DB.isMock()) {
-    profiles = DB.mock.profiles;
-  } else {
-    // Note: This is a synchronous function, so we might need to handle this differently.
-    // However, if we are in the teacher dashboard, profiles are usually already in the Store or can be passed.
-    // For now, let's use Store if available, or just mock it.
-    // Better: _renderReportModal should be called after fetching data.
-    // Actually, profiles are already fetched in _renderSubmissions and _renderTasks.
-    // We can assume they are available or just show "Student" if not.
-  }
+function _renderReportModal(sub, report, t, profiles = []) {
   const student = profiles.find(p => p.id === sub.student_id);
   const segments = report?.integrity_details?.suspicious_segments || [];
   const heatmap = report?.integrity_details?.heatmap_data || [];
@@ -514,7 +561,7 @@ function _renderReportModal(sub, report, t) {
 
   return `
     <div class="modal-overlay" id="report-modal-overlay">
-      <div class="modal" style="max-width:800px">
+      <div class="modal" style="max-width:900px; max-height: 90vh; overflow-y: auto;">
         <div class="modal-header">
           <div class="modal-title">${student?.full_name || 'Student'} — ${t('feedback.title')}</div>
           <button class="btn btn-ghost btn-sm" id="close-report-modal">${t('common.close')}</button>
@@ -534,16 +581,33 @@ function _renderReportModal(sub, report, t) {
             <div class="score-label">${t('integrity.aiProb')}</div>
           </div>
         </div>
-        ${segments.length > 0 ? `
-          <h4 class="mb-2">${t('integrity.suspicious')}</h4>
-          <div class="card mb-4" style="padding:16px">
-            <div class="heatmap-text">
-              ${_renderHeatmapText(sub.content, segments)}
+        <div class="flex flex-col gap-6">
+          <!-- Student Essay Section -->
+          <div class="essay-detail-section">
+            <h4 class="mb-2 flex items-center gap-2">📄 Öğrenci Ödevi <span class="text-xs text-muted font-normal">(${sub.word_count} kelime)</span></h4>
+            <div class="card" style="padding:20px; background: var(--bg-app); border: 1px solid var(--border); font-size: 0.95rem; line-height: 1.7; white-space: pre-wrap; max-height: 300px; overflow-y: auto;">${sub.content}</div>
+          </div>
+
+          <!-- Integrity Heatmap (if segments exist) -->
+          ${segments.length > 0 ? `
+            <div>
+              <h4 class="mb-2">🚨 İntihal & AI Analizi (Isı Haritası)</h4>
+              <div class="card" style="padding:16px; background: var(--bg-card);">
+                <div class="heatmap-text" style="font-size: 0.9rem;">
+                  ${_renderHeatmapText(sub.content, segments)}
+                </div>
+              </div>
+            </div>
+          ` : ''}
+
+          <!-- AI Feedback Section -->
+          <div>
+            <h4 class="mb-2">🤖 Yapay Zeka Değerlendirmesi</h4>
+            <div class="card feedback-content" id="feedback-md-content" style="padding:24px; background: var(--bg-card); border-left: 4px solid var(--accent);">
+              ${report?.ai_feedback_markdown || t('feedback.pending')}
             </div>
           </div>
-        ` : ''}
-        <h4 class="mb-2">${t('feedback.title')}</h4>
-        <div class="feedback-content" id="feedback-md-content">${report?.ai_feedback_markdown || t('feedback.pending')}</div>
+        </div>
         <div class="flex gap-2 mt-4 justify-between">
           <div class="form-group" style="max-width:120px">
             <label class="form-label">${t('teacher.overrideGrade')}</label>
@@ -834,23 +898,67 @@ function attachEvents() {
         report = rData?.[0];
       }
       if (sub && report) {
+        let profilesList = [];
+        if (DB.isMock()) {
+          profilesList = DB.mock.profiles;
+        } else {
+          const { data: pData } = await DB.query('profiles');
+          profilesList = pData || [];
+        }
+        
         const area = document.getElementById('report-modal-area');
         if (area) {
-          area.innerHTML = _renderReportModal(sub, report, I18n.t.bind(I18n));
+          area.innerHTML = _renderReportModal(sub, report, I18n.t.bind(I18n), profilesList);
           // Render markdown
           const mdEl = document.getElementById('feedback-md-content');
           if (mdEl && window.marked) mdEl.innerHTML = window.marked.parse(mdEl.textContent);
           document.getElementById('close-report-modal')?.addEventListener('click', () => { area.innerHTML = ''; });
           document.getElementById('report-modal-overlay')?.addEventListener('click', (e) => { if (e.target.id === 'report-modal-overlay') area.innerHTML = ''; });
           // Override grade
-          document.getElementById('save-override-btn')?.addEventListener('click', () => {
+          document.getElementById('save-override-btn')?.addEventListener('click', async () => {
             const val = parseInt(document.getElementById('override-grade')?.value);
             if (!isNaN(val) && val >= 0 && val <= 100) {
-              report.final_grade = val;
+              if (DB.isMock()) {
+                report.final_grade = val;
+              } else {
+                await DB.query('feedback_reports', { update: { final_grade: val }, eq: ['submission_id', sub.id] });
+              }
               Store.toast('success', I18n.t('teacher.overrideGrade') + ': ' + val);
               area.innerHTML = '';
+              _rerender();
             }
           });
+        }
+      }
+    });
+  });
+
+  // View essay only
+  document.querySelectorAll('.view-essay-btn').forEach(el => {
+    el.addEventListener('click', async () => {
+      const subId = el.dataset.subId;
+      let sub = null;
+      if (DB.isMock()) {
+        sub = DB.mock.submissions.find(s => s.id === subId);
+      } else {
+        const { data: sData } = await DB.query('submissions', { eq: ['id', subId] });
+        sub = sData?.[0];
+      }
+
+      if (sub) {
+        let profilesList = [];
+        if (DB.isMock()) {
+          profilesList = DB.mock.profiles;
+        } else {
+          const { data: pData } = await DB.query('profiles');
+          profilesList = pData || [];
+        }
+
+        const area = document.getElementById('report-modal-area');
+        if (area) {
+          area.innerHTML = _renderReportModal(sub, null, I18n.t.bind(I18n), profilesList);
+          document.getElementById('close-report-modal')?.addEventListener('click', () => { area.innerHTML = ''; });
+          document.getElementById('report-modal-overlay')?.addEventListener('click', (e) => { if (e.target.id === 'report-modal-overlay') area.innerHTML = ''; });
         }
       }
     });
@@ -933,36 +1041,56 @@ async function _rerender() {
 }
 
 async function _renderCharts() {
-  const canvas = document.getElementById('analytics-chart');
-  if (!canvas || !window.Chart) return;
+  const canvases = document.querySelectorAll('canvas[id^="chart-"]');
+  if (canvases.length === 0 || !window.Chart) return;
+
   let reports = [];
+  let subs = [];
+  let tasks = [];
+
   if (DB.isMock()) {
     reports = DB.mock.feedback_reports;
+    subs = DB.mock.submissions;
+    tasks = DB.mock.tasks;
   } else {
-    const { data } = await DB.query('feedback_reports');
-    reports = data || [];
+    const { data: rData } = await DB.query('feedback_reports');
+    reports = rData || [];
+    const { data: sData } = await DB.query('submissions');
+    subs = sData || [];
+    const { data: tData } = await DB.query('tasks');
+    tasks = tData || [];
   }
-  if (reports.length === 0) return;
 
-  const labels = reports.map((_, i) => `Student ${i + 1}`);
-  new window.Chart(canvas, {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [
-        { label: 'Grade', data: reports.map(r => r.final_grade || 0), backgroundColor: 'rgba(99,102,241,0.6)', borderRadius: 6 },
-        { label: 'Plagiarism %', data: reports.map(r => r.plagiarism_score || 0), backgroundColor: 'rgba(245,158,11,0.5)', borderRadius: 6 },
-        { label: 'AI Probability %', data: reports.map(r => r.ai_probability_score || 0), backgroundColor: 'rgba(6,182,212,0.5)', borderRadius: 6 },
-      ]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { labels: { color: '#94a3b8' } } },
-      scales: {
-        x: { ticks: { color: '#64748b' }, grid: { color: 'rgba(148,163,184,0.08)' } },
-        y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(148,163,184,0.08)' }, max: 100 }
+  canvases.forEach(canvas => {
+    const classId = canvas.id.replace('chart-', '');
+    const classTasks = tasks.filter(tk => tk.class_id === classId);
+    const classTaskIds = classTasks.map(tk => tk.id);
+    const classSubs = subs.filter(s => classTaskIds.includes(s.task_id));
+    const classSubIds = classSubs.map(s => s.id);
+    const classReports = reports.filter(r => classSubIds.includes(r.submission_id));
+
+    if (classReports.length === 0) return;
+
+    const labels = classReports.map((_, i) => `Öğrenci ${i + 1}`);
+    new window.Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Not', data: classReports.map(r => r.final_grade || 0), backgroundColor: 'rgba(99,102,241,0.6)', borderRadius: 6 },
+          { label: 'İntihal %', data: classReports.map(r => r.plagiarism_score || 0), backgroundColor: 'rgba(245,158,11,0.5)', borderRadius: 6 },
+          { label: 'AI Olasılığı %', data: classReports.map(r => r.ai_probability_score || 0), backgroundColor: 'rgba(6,182,212,0.5)', borderRadius: 6 },
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#94a3b8' } } },
+        scales: {
+          x: { ticks: { color: '#64748b' }, grid: { color: 'rgba(148,163,184,0.08)' } },
+          y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(148,163,184,0.08)' }, max: 100 }
+        }
       }
-    }
+    });
   });
 }
 
