@@ -134,11 +134,11 @@ function _renderSidebar(user, t) {
   `;
 }
 
-async function _renderContent(t, tasks) {
-  if (_activeTab === 'classes') return await _renderClasses(t);
-  if (_activeTab === 'tasks') return await _renderTasks(t, tasks);
-  if (_activeTab === 'submissions') return await _renderSubmissions(t, tasks);
-  if (_activeTab === 'analytics') return await _renderAnalytics(t);
+function _renderContent(t, tasks) {
+  if (_activeTab === 'classes') return _renderClasses(t);
+  if (_activeTab === 'tasks') return _renderTasks(t, tasks);
+  if (_activeTab === 'submissions') return _renderSubmissions(t, tasks);
+  if (_activeTab === 'analytics') return _renderAnalytics(t, tasks);
   return '';
 }
 
