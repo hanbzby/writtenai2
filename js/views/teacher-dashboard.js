@@ -17,11 +17,12 @@ async function render() {
   const user = Store.getState('currentUser');
   let tasks = [];
   if (DB.isMock()) {
-    tasks = DB.mock.tasks;
-  } else if (user) {
-    const { data } = await DB.query('tasks', { eq: ['created_by', user.id] });
+    tasks = DB.mock.tasks.filter(t => t.created_by === user?.id);
+  } else {
+    const { data } = await DB.query('tasks', { eq: ['created_by', user?.id] });
     tasks = data || [];
   }
+  tasks.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   return `
     <div class="app-layout">
@@ -91,8 +92,8 @@ function _renderSidebar(user, t) {
 
 async function _renderContent(t, tasks) {
   if (_activeTab === 'classes') return await _renderClasses(t);
-  if (_activeTab === 'tasks') return await _renderTasks(t, tasks); // await eklendi
-  if (_activeTab === 'submissions') return await _renderSubmissions(t, tasks); // await eklendi
+  if (_activeTab === 'tasks') return await _renderTasks(t, tasks);
+  if (_activeTab === 'submissions') return await _renderSubmissions(t, tasks);
   if (_activeTab === 'analytics') return await _renderAnalytics(t);
   return '';
 }
@@ -100,7 +101,6 @@ async function _renderContent(t, tasks) {
 async function _renderClasses(t) {
   const user = Store.getState('currentUser');
   
-  // Kullanıcı bilgisi henüz sisteme oturmadıysa bir yükleme ekranı göster
   if (!user || !user.id) {
     return `
       <div class="skeleton-wrap" style="padding: var(--sp-6);">
@@ -114,7 +114,6 @@ async function _renderClasses(t) {
     `;
   }
 
-  // Kullanıcı hazırsa sadece o öğretmene ait sınıfları getir
   const { data: classes = [] } = await DB.query('classes', { eq: ['teacher_id', user.id] });
   
   let enrollments = [];
@@ -165,11 +164,11 @@ async function _renderClasses(t) {
 }
 
 async function _renderTasks(t, tasks) {
-  // Canlı modda görevleri Store'dan veya DB'den al
   if (!DB.isMock()) {
      const { data: dbTasks } = await DB.query('tasks', { eq: ['created_by', Store.getState('currentUser')?.id] });
      tasks = dbTasks || [];
   }
+  tasks.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   if (_activeClassId) tasks = tasks.filter(tk => tk.class_id === _activeClassId);
   
@@ -337,12 +336,12 @@ async function _renderSubmissions(t, tasks) {
     
     const { data: dbProfiles } = await DB.query('profiles');
     profiles = dbProfiles || [];
+    Store.dispatch(Store.Events.PROFILES_LOADED, { profiles });
   }
   
   const teacherTaskIds = tasks.map(t => t.id);
   const relevantSubs = subs.filter(s => teacherTaskIds.includes(s.task_id));
 
-  // Group by task
   const grouped = {};
   relevantSubs.forEach(s => {
     if (!grouped[s.task_id]) grouped[s.task_id] = [];
@@ -435,13 +434,13 @@ async function _renderAnalytics(t) {
     reports = rData || [];
     const { data: sData } = await DB.query('submissions');
     subs = sData || [];
-    const { data: tData } = await DB.query('tasks');
-    tasks = tData || [];
+    const { data: allTasks } = await DB.query('tasks');
+    tasks = (allTasks || []).filter(tk => classes.map(c => c.id).includes(tk.class_id));
+    tasks.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     const { data: cData } = await DB.query('classes', { eq: ['teacher_id', Store.getState('currentUser')?.id] });
     classes = cData || [];
   }
 
-  // Group reports by class
   const classAnalytics = classes.map(cls => {
     const classTasks = tasks.filter(tk => tk.class_id === cls.id);
     const classTaskIds = classTasks.map(tk => tk.id);
@@ -910,16 +909,20 @@ function attachEvents() {
         }
 
         if (sub && report) {
-          let profilesList = [];
-          if (DB.isMock()) {
-            profilesList = DB.mock.profiles;
-          } else {
-            // Check if profiles are already in Store or just fetch
-            const { data: pData } = await DB.query('profiles');
-            profilesList = pData || [];
+          // Immediate modal open with loading state
+          const area = document.getElementById('report-modal-area');
+          if (area) {
+             area.innerHTML = `<div class="modal-overlay"><div class="modal"><h3>Yükleniyor...</h3></div></div>`;
+          }
+
+          let profilesList = Store.getState('profiles') || [];
+          if (profilesList.length === 0) {
+            try {
+              const { data: pData } = await DB.query('profiles');
+              profilesList = pData || [];
+            } catch (e) { }
           }
           
-          const area = document.getElementById('report-modal-area');
           if (area) {
             area.innerHTML = _renderReportModal(sub, report, I18n.t.bind(I18n), profilesList);
             const mdEl = document.getElementById('feedback-md-content');
@@ -972,15 +975,17 @@ function attachEvents() {
         }
 
         if (sub) {
-          let profilesList = [];
-          if (DB.isMock()) {
-            profilesList = DB.mock.profiles;
-          } else {
-            const { data: pData } = await DB.query('profiles');
-            profilesList = pData || [];
+          const area = document.getElementById('report-modal-area');
+          if (area) area.innerHTML = `<div class="modal-overlay"><div class="modal"><h3>Yükleniyor...</h3></div></div>`;
+
+          let profilesList = Store.getState('profiles') || [];
+          if (profilesList.length === 0) {
+            try {
+              const { data: pData } = await DB.query('profiles');
+              profilesList = pData || [];
+            } catch (e) { }
           }
 
-          const area = document.getElementById('report-modal-area');
           if (area) {
             area.innerHTML = _renderReportModal(sub, null, I18n.t.bind(I18n), profilesList);
             document.getElementById('close-report-modal')?.addEventListener('click', () => { area.innerHTML = ''; });

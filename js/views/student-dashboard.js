@@ -34,6 +34,7 @@ async function render() {
       if (myClassIds.length > 0) {
         const { data: allTasks } = await DB.query('tasks');
         tasks = (allTasks || []).filter(tk => myClassIds.includes(tk.class_id));
+        tasks.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
         const { data: allClasses } = await DB.query('classes');
         myClasses = (allClasses || []).filter(c => myClassIds.includes(c.id));

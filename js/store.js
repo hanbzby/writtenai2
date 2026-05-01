@@ -20,6 +20,7 @@ const Store = (() => {
     isProcessing: false,
     isLoading: false,
     toasts: [],               // { id, type, message, duration }
+    profiles: [],             // Cached profiles for dashboard use
     // ── Stage 3: Class Management ──
     userClasses: [],          // classes the user owns (teacher) or is enrolled in (student)
     activeClass: null,        // currently selected class { id, class_name, join_code, ... }
@@ -111,6 +112,7 @@ const Store = (() => {
     // Stage 3
     CLASSES_LOADED: 'CLASSES_LOADED',
     CLASS_CHANGED: 'CLASS_CHANGED',
+    PROFILES_LOADED: 'PROFILES_LOADED',
   });
 
   return Object.freeze({ subscribe, dispatch, getState, toast, Events });
