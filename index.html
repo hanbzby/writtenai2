@@ -42,7 +42,12 @@
   </div>
 
   <!-- App Entry Point (ES Module) -->
-  <script type="module" src="js/config.js"></script>
-  <script type="module" src="js/app.js"></script>
-</body>
-</html>
+  <!-- 1. Supabase Ana Kütüphanesi (Olmazsa olmaz) -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<!-- 2. Senin Veritabanı Bağlantı Dosyan -->
+<script src="supabase/supabase-crud.js"></script>
+
+<!-- 3. Uygulama Giriş Noktaları -->
+<script type="module" src="js/config.js"></script>
+<script type="module" src="js/app.js"></script>
