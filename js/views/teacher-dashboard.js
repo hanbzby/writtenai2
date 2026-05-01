@@ -84,8 +84,8 @@ function _renderSidebar(user, t) {
 
 async function _renderContent(t, tasks) {
   if (_activeTab === 'classes') return await _renderClasses(t);
-  if (_activeTab === 'tasks') return _renderTasks(t, tasks);
-  if (_activeTab === 'submissions') return _renderSubmissions(t, tasks);
+  if (_activeTab === 'tasks') return await _renderTasks(t, tasks); // await eklendi
+  if (_activeTab === 'submissions') return await _renderSubmissions(t, tasks); // await eklendi
   if (_activeTab === 'analytics') return _renderAnalytics(t);
   return '';
 }
@@ -129,8 +129,13 @@ async function _renderClasses(t) {
   `;
 }
 
-function _renderTasks(t, tasks) {
-  // Filter tasks by active class if set
+async function _renderTasks(t, tasks) {
+  // Canlı modda görevleri Store'dan veya DB'den al
+  if (!DB.isMock()) {
+     const { data: dbTasks } = await DB.query('tasks', { eq: ['created_by', Store.getState('currentUser')?.id] });
+     tasks = dbTasks || [];
+  }
+
   if (_activeClassId) tasks = tasks.filter(tk => tk.class_id === _activeClassId);
   const activeClassName = _activeClassId ? (DB.isMock() ? DB.mock.classes.find(c => c.id === _activeClassId)?.class_name : '') : '';
   const subs = DB.isMock() ? DB.mock.submissions : [];
@@ -197,8 +202,14 @@ function _renderTasks(t, tasks) {
   `;
 }
 
-function _renderSubmissions(t, tasks) {
-  const subs = DB.isMock() ? DB.mock.submissions : [];
+async function _renderSubmissions(t, tasks) {
+  let subs = [];
+  if (DB.isMock()) {
+    subs = DB.mock.submissions;
+  } else {
+    const { data: dbSubs } = await DB.query('submissions', { order: ['created_at', { ascending: false }] });
+    subs = dbSubs || [];
+  }
   const reports = DB.isMock() ? DB.mock.feedback_reports : [];
   const profiles = DB.isMock() ? DB.mock.profiles : [];
 
@@ -506,17 +517,18 @@ function attachEvents() {
       };
 
       try {
-        const { error } = await DB.query('classes', { insert: cls });
+        const { data, error } = await DB.query('classes', { insert: cls });
         
         if (error) throw error;
 
-        Store.toast('success', I18n.t('class.create') + ' ✓ — ' + I18n.t('class.joinCode') + ': ' + cls.join_code);
+        // Başarılı kayıttan sonra veriyi tekrar çekmek için kısa bir bekleme
+        Store.toast('success', I18n.t('class.create') + ' ✓');
         area.innerHTML = '';
-        _rerender(); // Sayfayı yenile
+        setTimeout(() => _rerender(), 500); 
 
       } catch (err) {
-        console.error("Sınıf kaydedilirken hata:", err);
-        Store.toast('error', "Sınıf oluşturulamadı!");
+        console.error("DB Error:", err);
+        Store.toast('error', "Hata: " + (err.message || "Sınıf kaydedilemedi. Supabase RLS ayarlarını kontrol et!"));
       }
     });
   });
@@ -640,13 +652,13 @@ function _attachModalEvents() {
   document.getElementById('task-modal-overlay')?.addEventListener('click', (e) => {
     if (e.target.id === 'task-modal-overlay') document.getElementById('task-modal-area').innerHTML = '';
   });
-  document.getElementById('task-form')?.addEventListener('submit', (e) => {
+  document.getElementById('task-form')?.addEventListener('submit', async (e) => { // async eklendi
     e.preventDefault();
     const criteriaRaw = document.getElementById('tf-criteria').value;
     const criteria = criteriaRaw.split('\n').map(s => s.trim()).filter(Boolean);
     const classSelect = document.getElementById('tf-class');
+    
     const newTask = {
-      id: 'task-' + Date.now().toString(36),
       created_by: Store.getState('currentUser')?.id,
       class_id: classSelect ? classSelect.value : null,
       title: document.getElementById('tf-title').value,
@@ -656,19 +668,25 @@ function _attachModalEvents() {
       language_policy: document.getElementById('tf-lang').value,
       scoring_framework: document.getElementById('tf-framework').value,
       show_integrity_to_student: document.getElementById('tf-show-integrity').checked,
-      is_published: false,
-      created_at: new Date().toISOString()
+      is_published: false
     };
-    if (DB.isMock()) {
-      DB.mock.tasks.push(newTask);
-      // Auto-enroll all students
-      DB.mock.profiles.filter(p => p.role === 'STUDENT').forEach(p => {
-        DB.mock.enrollments.push({ id: 'e-' + Date.now().toString(36) + Math.random().toString(36).slice(2,4), task_id: newTask.id, student_id: p.id, whitelisted_late: false });
-      });
+
+    try {
+      if (DB.isMock()) {
+        newTask.id = 'task-' + Date.now().toString(36);
+        DB.mock.tasks.push(newTask);
+      } else {
+        const { error } = await DB.query('tasks', { insert: newTask });
+        if (error) throw error;
+      }
+      
+      Store.toast('success', I18n.t('teacher.newTask') + ' ✓');
+      document.getElementById('task-modal-area').innerHTML = '';
+      _rerender();
+    } catch (err) {
+      console.error("Görev kaydedilemedi:", err);
+      Store.toast('error', "Görev oluşturulamadı!");
     }
-    Store.toast('success', I18n.t('teacher.newTask') + ' ✓');
-    document.getElementById('task-modal-area').innerHTML = '';
-    _rerender();
   });
 }
 
