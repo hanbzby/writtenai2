@@ -441,7 +441,7 @@ function _showJoinModal() {
     if (DB.isMock()) {
       DB.mock.class_enrollments.push({ id: 'ce-' + Date.now().toString(36), student_id: user.id, class_id: cls.id, enrolled_at: new Date().toISOString() });
     } else {
-      await DB.query('class_enrollments', { insert: { id: crypto.randomUUID(), student_id: user.id, class_id: cls.id, enrolled_at: new Date().toISOString() } });
+      await DB.query('class_enrollments', { insert: { id: DB.generateUUID(), student_id: user.id, class_id: cls.id, enrolled_at: new Date().toISOString() } });
     }
     
     Store.toast('success', I18n.t('class.joined') + ' — ' + cls.class_name);

@@ -49,6 +49,17 @@ function generateJoinCode() {
   return code;
 }
 
+/** Robust UUID Generator for compatibility with file:// protocol */
+function generateUUID() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    try { return crypto.randomUUID(); } catch (e) {}
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
 // ── Mock Data Store ──
 const mock = {
   profiles: [
@@ -169,6 +180,6 @@ async function query(table, { select, match, eq, upsert, insert, update, del, or
   return { data, error: null };
 }
 
-const DB = { init, isMock, client, query, mock, generateJoinCode };
+const DB = { init, isMock, client, query, mock, generateJoinCode, generateUUID };
 init(); // Auto-initialize on import
 export default DB;

@@ -510,7 +510,7 @@ function attachEvents() {
       }
 
       const cls = { 
-          id: crypto.randomUUID(),
+          id: DB.generateUUID(),
           teacher_id: user.id, // user?.id yerine doğrudan kesin ID
           class_name: document.getElementById('cf-name').value, 
           join_code: DB.generateJoinCode(),
@@ -660,7 +660,7 @@ function _attachModalEvents() {
     const classSelect = document.getElementById('tf-class');
     
     const newTask = {
-      id: crypto.randomUUID(),
+      id: DB.generateUUID(),
       created_by: Store.getState('currentUser')?.id,
       class_id: classSelect ? classSelect.value : null,
       title: document.getElementById('tf-title').value,
