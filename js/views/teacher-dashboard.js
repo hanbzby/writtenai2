@@ -767,7 +767,10 @@ function _attachModalEvents() {
         DB.mock.tasks.push(newTask);
       } else {
         const { error } = await DB.query('tasks', { insert: newTask });
-        if (error) throw error;
+        if (error) {
+          alert(`Görev oluşturulamadı!\nMesaj: ${error.message}\nDetay: ${error.details || ''}\nİpucu: ${error.hint || ''}`);
+          throw error;
+        }
       }
       
       Store.toast('success', I18n.t('teacher.newTask') + ' ✓');
