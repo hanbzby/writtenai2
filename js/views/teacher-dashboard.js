@@ -7,9 +7,10 @@ import DB from '../supabase-client.js';
 import DeadlineEngine from '../services/deadline-engine.js';
 import QueueHandler from '../services/queue-handler.js';
 
-let _activeTab = 'classes';
+let _activeTab = 'tasks';
 let _selectedTask = null;
 let _activeClassId = null;
+let _realtimeChannel = null;
 
 async function render() {
   const t = I18n.t.bind(I18n);
@@ -273,6 +274,7 @@ async function _renderTasks(t, tasks) {
                       <th style="padding: 4px;">Durum</th>
                       <th style="padding: 4px;">Kelime</th>
                       <th style="padding: 4px;">Not</th>
+                      <th style="padding: 4px;">İşlem</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -286,6 +288,12 @@ async function _renderTasks(t, tasks) {
                           <td style="padding: 4px;"><span class="badge ${statusBadge}" style="font-size: 0.65rem; padding: 2px 6px;">${t('status.' + s.status)}</span></td>
                           <td style="padding: 4px;">${s.word_count || 0}</td>
                           <td style="padding: 4px; font-weight: bold; font-family: var(--font-mono);">${rep?.final_grade ?? '—'}</td>
+                          <td style="padding: 4px;">
+                            <div class="flex gap-1">
+                              ${rep ? `<button class="btn btn-ghost btn-sm view-report-btn" data-sub-id="${s.id}" style="padding:2px; min-height:auto;" title="Raporu Gör">🔍</button>` : ''}
+                              <button class="btn btn-ghost btn-sm view-essay-btn" data-sub-id="${s.id}" style="padding:2px; min-height:auto;" title="Ödevi Gör">📄</button>
+                            </div>
+                          </td>
                         </tr>
                       `;
                     }).join('')}
@@ -972,6 +980,8 @@ function _attachModalEvents(classes = []) {
   document.getElementById('task-modal-overlay')?.addEventListener('click', (e) => {
     if (e.target.id === 'task-modal-overlay') document.getElementById('task-modal-area').innerHTML = '';
   });
+  
+  // Quick deadlines
   document.querySelectorAll('.quick-deadline').forEach(btn => {
     btn.addEventListener('click', () => {
       const hours = parseFloat(btn.dataset.hours || 0);
@@ -982,7 +992,7 @@ function _attachModalEvents(classes = []) {
     });
   });
 
-  document.getElementById('task-form')?.addEventListener('submit', async (e) => { // async eklendi
+  document.getElementById('task-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const criteriaRaw = document.getElementById('tf-criteria').value;
     const criteria = criteriaRaw.split('\n').map(s => s.trim()).filter(Boolean);
@@ -1001,7 +1011,7 @@ function _attachModalEvents(classes = []) {
       title: document.getElementById('tf-title').value,
       description: document.getElementById('tf-desc').value,
       deadline_datetime: new Date(document.getElementById('tf-deadline').value).toISOString(),
-      custom_criteria: criteria, // JSON.stringify yerine doğrudan array olarak gönder
+      custom_criteria: criteria,
       language_policy: document.getElementById('tf-lang').value,
       scoring_framework: document.getElementById('tf-framework').value,
       show_integrity_to_student: document.getElementById('tf-show-integrity').checked,
@@ -1015,83 +1025,22 @@ function _attachModalEvents(classes = []) {
         DB.mock.tasks.push(newTask);
       } else {
         const { error } = await DB.query('tasks', { insert: newTask });
-        if (error) {
-          alert(`Görev oluşturulamadı!\nMesaj: ${error.message}\nDetay: ${error.details || ''}\nİpucu: ${error.hint || ''}`);
-          throw error;
-        }
+        if (error) throw error;
       }
-      
       Store.toast('success', I18n.t('teacher.newTask') + ' ✓');
       document.getElementById('task-modal-area').innerHTML = '';
       _rerender();
     } catch (err) {
-      console.error("Görev kaydedilemedi:", err);
       Store.toast('error', "Görev oluşturulamadı!");
     }
   });
 }
 
-async function _rerender() {
-  const app = document.getElementById('app');
-  if (app) {
-    app.innerHTML = await render();
-    attachEvents();
-    await _renderCharts();
+function cleanup() {
+  if (_realtimeChannel) {
+    _realtimeChannel.unsubscribe();
+    _realtimeChannel = null;
   }
 }
 
-async function _renderCharts() {
-  const canvases = document.querySelectorAll('canvas[id^="chart-"]');
-  if (canvases.length === 0 || !window.Chart) return;
-
-  let reports = [];
-  let subs = [];
-  let tasks = [];
-
-  if (DB.isMock()) {
-    reports = DB.mock.feedback_reports;
-    subs = DB.mock.submissions;
-    tasks = DB.mock.tasks;
-  } else {
-    const { data: rData } = await DB.query('feedback_reports');
-    reports = rData || [];
-    const { data: sData } = await DB.query('submissions');
-    subs = sData || [];
-    const { data: tData } = await DB.query('tasks');
-    tasks = tData || [];
-  }
-
-  canvases.forEach(canvas => {
-    const classId = canvas.id.replace('chart-', '');
-    const classTasks = tasks.filter(tk => tk.class_id === classId);
-    const classTaskIds = classTasks.map(tk => tk.id);
-    const classSubs = subs.filter(s => classTaskIds.includes(s.task_id));
-    const classSubIds = classSubs.map(s => s.id);
-    const classReports = reports.filter(r => classSubIds.includes(r.submission_id));
-
-    if (classReports.length === 0) return;
-
-    const labels = classReports.map((_, i) => `Öğrenci ${i + 1}`);
-    new window.Chart(canvas, {
-      type: 'bar',
-      data: {
-        labels,
-        datasets: [
-          { label: 'Not', data: classReports.map(r => r.final_grade || 0), backgroundColor: 'rgba(99,102,241,0.6)', borderRadius: 6 },
-          { label: 'İntihal %', data: classReports.map(r => r.plagiarism_score || 0), backgroundColor: 'rgba(245,158,11,0.5)', borderRadius: 6 },
-          { label: 'AI Olasılığı %', data: classReports.map(r => r.ai_probability_score || 0), backgroundColor: 'rgba(6,182,212,0.5)', borderRadius: 6 },
-        ]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { labels: { color: '#94a3b8' } } },
-        scales: {
-          x: { ticks: { color: '#64748b' }, grid: { color: 'rgba(148,163,184,0.08)' } },
-          y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(148,163,184,0.08)' }, max: 100 }
-        }
-      }
-    });
-  });
-}
-
-export default { render, attachEvents, afterMount: _renderCharts };
+export default { render, attachEvents, cleanup, afterMount: _renderCharts };

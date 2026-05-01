@@ -38,6 +38,10 @@ async function render() {
         const { data: allClasses } = await DB.query('classes');
         myClasses = (allClasses || []).filter(c => myClassIds.includes(c.id));
       }
+      
+      // Fetch submissions to ensure status is correct
+      const { data: subs } = await DB.query('submissions', { eq: ['student_id', user?.id] });
+      Store.dispatch(Store.Events.SUBMISSIONS_LOADED, { submissions: subs || [] });
     }
 
     return `
@@ -143,7 +147,7 @@ function _renderTasks(t, user, tasks, myClasses) {
           const storeSubs = Store.getState('submissions') || [];
           const sub = storeSubs.find(s => s.task_id === task.id && s.student_id === user?.id) || 
                       (DB.isMock() ? DB.mock.submissions.find(s => s.task_id === task.id && s.student_id === user?.id) : null);
-          const isSubmitted = sub && sub.status === 'SUBMITTED';
+          const isSubmitted = sub && (sub.status === 'SUBMITTED' || sub.status === 'GRADED' || sub.status === 'PUBLISHED');
           const isDraft = sub && sub.status === 'DRAFT';
           
           const deadline = DeadlineEngine.getRemaining(task.deadline_datetime);
@@ -154,9 +158,19 @@ function _renderTasks(t, user, tasks, myClasses) {
             <div class="task-card" data-task-id="${task.id}">
               <div class="task-card-header">
                 <div class="task-card-title">${task.title}</div>
-                ${isSubmitted ? `<span class="badge badge-success">${t('student.submitted')}</span>` : isDraft ? `<span class="badge badge-warning">Taslak</span>` : `<span class="badge badge-neutral">${t('student.notSubmitted')}</span>`}
+                <div class="flex gap-2">
+                  ${task.is_published ? `<span class="badge badge-info">NOTLAR YAYINLANDI</span>` : ''}
+                  ${isSubmitted ? `<span class="badge badge-success">${t('student.submitted')}</span>` : isDraft ? `<span class="badge badge-warning">Taslak</span>` : `<span class="badge badge-neutral">${t('student.notSubmitted')}</span>`}
+                </div>
               </div>
               <div class="task-card-desc">${task.description || ''}</div>
+              ${task.is_published && isSubmitted ? `
+                <div class="mb-4 p-3" style="background: var(--bg-card); border: 1px solid var(--accent); border-radius: var(--radius-sm); border-left: 4px solid var(--accent);">
+                  <div class="text-sm font-bold flex items-center gap-2">💬 Geri bildiriminiz hazır!</div>
+                  <div class="text-xs text-muted mb-2">Öğretmeniniz ödevi değerlendirdi ve geri bildirim yayınladı.</div>
+                  <button class="btn btn-accent btn-sm view-published-feedback" data-task-id="${task.id}">Raporu Görüntüle</button>
+                </div>
+              ` : ''}
               <div class="mb-4">
                 <div class="text-xs text-muted mb-2">${t('student.timeLeft')}</div>
                 <div class="countdown countdown--${urgency}" data-deadline="${task.deadline_datetime}">
@@ -378,6 +392,14 @@ function attachEvents() {
         Store.toast('success', I18n.t('student.submitted') + ' ✓');
         _rerender();
       });
+    });
+  });
+
+  // Shortcut to feedback tab
+  document.querySelectorAll('.view-published-feedback').forEach(el => {
+    el.addEventListener('click', () => {
+      _activeTab = 'feedback';
+      _rerender();
     });
   });
 

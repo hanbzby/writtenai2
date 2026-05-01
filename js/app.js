@@ -31,6 +31,7 @@ async function renderView(state) {
 
   // Cleanup previous view
   if (StudentDashboard.cleanup) StudentDashboard.cleanup();
+  if (TeacherDashboard.cleanup) TeacherDashboard.cleanup();
 
   switch (view) {
     case 'teacher':
