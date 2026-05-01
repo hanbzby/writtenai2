@@ -154,14 +154,29 @@ async function _renderTasks(t, tasks) {
   let activeClassName = '';
   let totalStudents = 0;
   let subs = [];
+  let reports = [];
+  let profiles = [];
+  let enrollmentsList = [];
 
   if (DB.isMock()) {
     activeClassName = _activeClassId ? DB.mock.classes.find(c => c.id === _activeClassId)?.class_name || '' : '';
     totalStudents = _activeClassId ? DB.mock.class_enrollments.filter(e => e.class_id === _activeClassId).length : DB.mock.profiles.filter(p => p.role === 'STUDENT').length;
     subs = DB.mock.submissions;
+    reports = DB.mock.feedback_reports;
+    profiles = DB.mock.profiles;
+    enrollmentsList = DB.mock.class_enrollments;
   } else {
     const { data: sData } = await DB.query('submissions');
     subs = sData || [];
+    
+    const { data: rData } = await DB.query('feedback_reports');
+    reports = rData || [];
+
+    const { data: pData } = await DB.query('profiles');
+    profiles = pData || [];
+
+    const { data: eData } = await DB.query('class_enrollments');
+    enrollmentsList = eData || [];
     
     if (_activeClassId) {
       const { data: cls } = await DB.query('classes', { eq: ['id', _activeClassId] });
@@ -214,7 +229,8 @@ async function _renderTasks(t, tasks) {
         const deadline = DeadlineEngine.getRemaining(task.deadline_datetime);
         const urgency = DeadlineEngine.getUrgency(task.deadline_datetime);
         const badgeClass = urgency === 'expired' ? 'badge-danger' : urgency === 'critical' ? 'badge-warning' : 'badge-success';
-        const enrollments = DB.isMock() ? DB.mock.enrollments.filter(e => e.task_id === task.id) : [];
+        const classStudents = enrollmentsList.filter(e => e.class_id === task.class_id);
+        const taskSubs = subs.filter(s => s.task_id === task.id);
         return `
           <div class="task-card" data-task-id="${task.id}">
             <div class="task-card-header">
@@ -225,8 +241,40 @@ async function _renderTasks(t, tasks) {
               </div>
             </div>
             <div class="task-card-desc">${task.description || ''}</div>
-            <div class="task-card-footer">
-              <div class="task-card-meta">👥 ${enrollments.length} ${t('teacher.students')}</div>
+            
+            <div class="mt-4 pt-4" style="border-top: 1px solid var(--border)">
+              <div class="text-sm font-bold mb-2">Teslim Edenler (${taskSubs.length} / ${classStudents.length})</div>
+              ${taskSubs.length > 0 ? `
+                <table style="width: 100%; font-size: var(--text-xs); border-collapse: collapse; margin-bottom: var(--sp-2);">
+                  <thead>
+                    <tr style="border-bottom: 1px solid var(--border); text-align: left;">
+                      <th style="padding: 4px;">Öğrenci</th>
+                      <th style="padding: 4px;">Durum</th>
+                      <th style="padding: 4px;">Kelime</th>
+                      <th style="padding: 4px;">Not</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${taskSubs.map(s => {
+                      const st = profiles.find(p => p.id === s.student_id);
+                      const rep = reports.find(r => r.submission_id === s.id);
+                      const statusBadge = s.status === 'GRADED' ? 'badge-success' : s.status === 'PROCESSING' ? 'badge-warning' : s.status === 'PUBLISHED' ? 'badge-info' : 'badge-neutral';
+                      return `
+                        <tr style="border-bottom: 1px dashed var(--border);">
+                          <td style="padding: 4px;">${st?.full_name || 'Bilinmiyor'}</td>
+                          <td style="padding: 4px;"><span class="badge ${statusBadge}" style="font-size: 0.65rem; padding: 2px 6px;">${t('status.' + s.status)}</span></td>
+                          <td style="padding: 4px;">${s.word_count || 0}</td>
+                          <td style="padding: 4px; font-weight: bold; font-family: var(--font-mono);">${rep?.final_grade ?? '—'}</td>
+                        </tr>
+                      `;
+                    }).join('')}
+                  </tbody>
+                </table>
+              ` : `<div class="text-xs text-muted mb-2">Henüz teslim eden öğrenci yok.</div>`}
+            </div>
+
+            <div class="task-card-footer mt-4">
+              <div class="task-card-meta">👥 ${classStudents.length} ${t('teacher.students')}</div>
               <div class="flex gap-2">
                 ${deadline.expired && !task.is_published ? `<button class="btn btn-sm btn-secondary batch-btn" data-task-id="${task.id}">${t('teacher.batchProcess')}</button>` : ''}
                 ${deadline.expired && !task.is_published ? `<button class="btn btn-sm btn-success publish-btn" data-task-id="${task.id}">${t('teacher.publish')}</button>` : ''}
