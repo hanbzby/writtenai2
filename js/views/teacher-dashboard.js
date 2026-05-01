@@ -481,13 +481,32 @@ function attachEvents() {
       </div>`;
     document.getElementById('close-class-modal')?.addEventListener('click', () => { area.innerHTML = ''; });
     document.getElementById('class-modal-overlay')?.addEventListener('click', (e) => { if (e.target.id === 'class-modal-overlay') area.innerHTML = ''; });
-    document.getElementById('class-form')?.addEventListener('submit', (e) => {
+    document.getElementById('class-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const cls = { id: 'class-' + Date.now().toString(36), teacher_id: Store.getState('currentUser')?.id, class_name: document.getElementById('cf-name').value, join_code: DB.generateJoinCode(), created_at: new Date().toISOString() };
-      if (DB.isMock()) DB.mock.classes.push(cls);
-      Store.toast('success', I18n.t('class.create') + ' ✓ — ' + I18n.t('class.joinCode') + ': ' + cls.join_code);
-      area.innerHTML = '';
-      _rerender();
+      const user = Store.getState('currentUser');
+      
+      const cls = { 
+          id: 'class-' + Date.now().toString(36), 
+          teacher_id: user?.id, 
+          class_name: document.getElementById('cf-name').value, 
+          join_code: DB.generateJoinCode(), 
+          created_at: new Date().toISOString() 
+      };
+
+      try {
+        // Supabase'e gerçek kayıt isteği
+        const { error } = await DB.client.from('classes').insert([cls]);
+        
+        if (error) throw error;
+
+        Store.toast('success', I18n.t('class.create') + ' ✓ — ' + I18n.t('class.joinCode') + ': ' + cls.join_code);
+        area.innerHTML = '';
+        _rerender(); // Sayfayı yenile
+
+      } catch (err) {
+        console.error("Sınıf kaydedilirken hata:", err);
+        Store.toast('error', "Sınıf oluşturulamadı!");
+      }
     });
   });
 
