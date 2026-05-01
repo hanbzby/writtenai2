@@ -1036,6 +1036,69 @@ function _attachModalEvents(classes = []) {
   });
 }
 
+async function _rerender() {
+  const app = document.getElementById('app');
+  if (app) {
+    app.innerHTML = await render();
+    attachEvents();
+    await _renderCharts();
+  }
+}
+
+async function _renderCharts() {
+  const canvases = document.querySelectorAll('canvas[id^="chart-"]');
+  if (canvases.length === 0 || !window.Chart) return;
+
+  let reports = [];
+  let subs = [];
+  let tasks = [];
+
+  if (DB.isMock()) {
+    reports = DB.mock.feedback_reports;
+    subs = DB.mock.submissions;
+    tasks = DB.mock.tasks;
+  } else {
+    const { data: rData } = await DB.query('feedback_reports');
+    reports = rData || [];
+    const { data: sData } = await DB.query('submissions');
+    subs = sData || [];
+    const { data: tData } = await DB.query('tasks');
+    tasks = tData || [];
+  }
+
+  canvases.forEach(canvas => {
+    const classId = canvas.id.replace('chart-', '');
+    const classTasks = tasks.filter(tk => tk.class_id === classId);
+    const classTaskIds = classTasks.map(tk => tk.id);
+    const classSubs = subs.filter(s => classTaskIds.includes(s.task_id));
+    const classSubIds = classSubs.map(s => s.id);
+    const classReports = reports.filter(r => classSubIds.includes(r.submission_id));
+
+    if (classReports.length === 0) return;
+
+    const labels = classReports.map((_, i) => `Öğrenci ${i + 1}`);
+    new window.Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Not', data: classReports.map(r => r.final_grade || 0), backgroundColor: 'rgba(99,102,241,0.6)', borderRadius: 6 },
+          { label: 'İntihal %', data: classReports.map(r => r.plagiarism_score || 0), backgroundColor: 'rgba(245,158,11,0.5)', borderRadius: 6 },
+          { label: 'AI Olasılığı %', data: classReports.map(r => r.ai_probability_score || 0), backgroundColor: 'rgba(6,182,212,0.5)', borderRadius: 6 },
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#94a3b8' } } },
+        scales: {
+          x: { ticks: { color: '#64748b' }, grid: { color: 'rgba(148,163,184,0.08)' } },
+          y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(148,163,184,0.08)' }, max: 100 }
+        }
+      }
+    });
+  });
+}
+
 function cleanup() {
   if (_realtimeChannel) {
     _realtimeChannel.unsubscribe();
