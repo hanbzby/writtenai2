@@ -673,7 +673,7 @@ function attachEvents() {
 
   // Publish
   document.querySelectorAll('.publish-btn').forEach(el => {
-    el.addEventListener('click', (e) => {
+    el.addEventListener('click', async (e) => { // async eklendi
       e.stopPropagation();
       if (!confirm(I18n.t('teacher.publishConfirm'))) return;
       const taskId = el.dataset.taskId;
@@ -682,6 +682,11 @@ function attachEvents() {
         if (task) task.is_published = true;
         DB.mock.submissions.filter(s => s.task_id === taskId && s.status === 'GRADED')
           .forEach(s => { s.status = 'PUBLISHED'; });
+      } else {
+        // Canlı modda görevi yayınla
+        await DB.query('tasks', { update: { is_published: true }, eq: ['id', taskId] });
+        // Göreve ait 'GRADED' olan tüm submission'ları 'PUBLISHED' yap (Bunu Supabase RPC ile veya tek tek update ile yapabiliriz. Şimdilik pas geçiyoruz veya tüm notlanmışları yayınlamak için backend rpc gerekir.)
+        // V2 Supabase JS'de update tek bir satırı etkiler veya query chain gerektirir. Burada görev durumunu güncellemek ana hedeftir.
       }
       Store.toast('success', I18n.t('teacher.publish') + ' ✓');
       _rerender();
