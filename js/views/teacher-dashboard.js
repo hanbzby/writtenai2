@@ -510,10 +510,11 @@ function attachEvents() {
       }
 
       const cls = { 
+          id: crypto.randomUUID(),
           teacher_id: user.id, // user?.id yerine doğrudan kesin ID
           class_name: document.getElementById('cf-name').value, 
-          join_code: DB.generateJoinCode()
-          // id ve created_at kısımları Supabase tarafından otomatik atanacak
+          join_code: DB.generateJoinCode(),
+          created_at: new Date().toISOString()
       };
 
       try {
@@ -659,6 +660,7 @@ function _attachModalEvents() {
     const classSelect = document.getElementById('tf-class');
     
     const newTask = {
+      id: crypto.randomUUID(),
       created_by: Store.getState('currentUser')?.id,
       class_id: classSelect ? classSelect.value : null,
       title: document.getElementById('tf-title').value,
@@ -668,7 +670,8 @@ function _attachModalEvents() {
       language_policy: document.getElementById('tf-lang').value,
       scoring_framework: document.getElementById('tf-framework').value,
       show_integrity_to_student: document.getElementById('tf-show-integrity').checked,
-      is_published: false
+      is_published: false,
+      created_at: new Date().toISOString()
     };
 
     try {
