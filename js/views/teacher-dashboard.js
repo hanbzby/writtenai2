@@ -329,7 +329,7 @@ async function _renderSubmissions(t, tasks) {
     reports = DB.mock.feedback_reports;
     profiles = DB.mock.profiles;
   } else {
-    const { data: dbSubs } = await DB.query('submissions', { order: ['created_at', { ascending: false }] });
+    const { data: dbSubs } = await DB.query('submissions');
     subs = dbSubs || [];
     
     const { data: dbReports } = await DB.query('feedback_reports');
@@ -893,50 +893,66 @@ function attachEvents() {
   // View report
   document.querySelectorAll('.view-report-btn').forEach(el => {
     el.addEventListener('click', async () => {
-      const subId = el.dataset.subId;
-      let sub = null;
-      let report = null;
-      if (DB.isMock()) {
-        sub = DB.mock.submissions.find(s => s.id === subId);
-        report = DB.mock.feedback_reports.find(r => r.submission_id === subId);
-      } else {
-        const { data: sData } = await DB.query('submissions', { eq: ['id', subId] });
-        sub = sData?.[0];
-        const { data: rData } = await DB.query('feedback_reports', { eq: ['submission_id', subId] });
-        report = rData?.[0];
-      }
-      if (sub && report) {
-        let profilesList = [];
-        if (DB.isMock()) {
-          profilesList = DB.mock.profiles;
-        } else {
-          const { data: pData } = await DB.query('profiles');
-          profilesList = pData || [];
-        }
+      try {
+        const subId = el.dataset.subId;
+        Store.dispatch(Store.Events.LOADING, true);
         
-        const area = document.getElementById('report-modal-area');
-        if (area) {
-          area.innerHTML = _renderReportModal(sub, report, I18n.t.bind(I18n), profilesList);
-          // Render markdown
-          const mdEl = document.getElementById('feedback-md-content');
-          if (mdEl && window.marked) mdEl.innerHTML = window.marked.parse(mdEl.textContent);
-          document.getElementById('close-report-modal')?.addEventListener('click', () => { area.innerHTML = ''; });
-          document.getElementById('report-modal-overlay')?.addEventListener('click', (e) => { if (e.target.id === 'report-modal-overlay') area.innerHTML = ''; });
-          // Override grade
-          document.getElementById('save-override-btn')?.addEventListener('click', async () => {
-            const val = parseInt(document.getElementById('override-grade')?.value);
-            if (!isNaN(val) && val >= 0 && val <= 100) {
-              if (DB.isMock()) {
-                report.final_grade = val;
-              } else {
-                await DB.query('feedback_reports', { update: { final_grade: val }, eq: ['submission_id', sub.id] });
-              }
-              Store.toast('success', I18n.t('teacher.overrideGrade') + ': ' + val);
-              area.innerHTML = '';
-              _rerender();
-            }
-          });
+        let sub = null;
+        let report = null;
+        if (DB.isMock()) {
+          sub = DB.mock.submissions.find(s => s.id === subId);
+          report = DB.mock.feedback_reports.find(r => r.submission_id === subId);
+        } else {
+          const { data: sData } = await DB.query('submissions', { eq: ['id', subId] });
+          sub = sData?.[0];
+          const { data: rData } = await DB.query('feedback_reports', { eq: ['submission_id', subId] });
+          report = rData?.[0];
         }
+
+        if (sub && report) {
+          let profilesList = [];
+          if (DB.isMock()) {
+            profilesList = DB.mock.profiles;
+          } else {
+            // Check if profiles are already in Store or just fetch
+            const { data: pData } = await DB.query('profiles');
+            profilesList = pData || [];
+          }
+          
+          const area = document.getElementById('report-modal-area');
+          if (area) {
+            area.innerHTML = _renderReportModal(sub, report, I18n.t.bind(I18n), profilesList);
+            const mdEl = document.getElementById('feedback-md-content');
+            if (mdEl && window.marked) mdEl.innerHTML = window.marked.parse(mdEl.textContent);
+            document.getElementById('close-report-modal')?.addEventListener('click', () => { area.innerHTML = ''; });
+            document.getElementById('report-modal-overlay')?.addEventListener('click', (e) => { if (e.target.id === 'report-modal-overlay') area.innerHTML = ''; });
+            
+            document.getElementById('save-override-btn')?.addEventListener('click', async () => {
+              try {
+                const val = parseInt(document.getElementById('override-grade')?.value);
+                if (!isNaN(val) && val >= 0 && val <= 100) {
+                  if (DB.isMock()) {
+                    report.final_grade = val;
+                  } else {
+                    await DB.query('feedback_reports', { update: { final_grade: val }, eq: ['submission_id', sub.id] });
+                  }
+                  Store.toast('success', I18n.t('teacher.overrideGrade') + ': ' + val);
+                  area.innerHTML = '';
+                  _rerender();
+                }
+              } catch (err) {
+                Store.toast('error', 'Not güncellenemedi');
+              }
+            });
+          }
+        } else {
+          Store.toast('warning', 'Rapor bulunamadı');
+        }
+      } catch (err) {
+        console.error("View Report Error:", err);
+        Store.toast('error', 'Rapor açılırken bir hata oluştu');
+      } finally {
+        Store.dispatch(Store.Events.LOADING, false);
       }
     });
   });
@@ -944,30 +960,37 @@ function attachEvents() {
   // View essay only
   document.querySelectorAll('.view-essay-btn').forEach(el => {
     el.addEventListener('click', async () => {
-      const subId = el.dataset.subId;
-      let sub = null;
-      if (DB.isMock()) {
-        sub = DB.mock.submissions.find(s => s.id === subId);
-      } else {
-        const { data: sData } = await DB.query('submissions', { eq: ['id', subId] });
-        sub = sData?.[0];
-      }
-
-      if (sub) {
-        let profilesList = [];
+      try {
+        const subId = el.dataset.subId;
+        Store.dispatch(Store.Events.LOADING, true);
+        let sub = null;
         if (DB.isMock()) {
-          profilesList = DB.mock.profiles;
+          sub = DB.mock.submissions.find(s => s.id === subId);
         } else {
-          const { data: pData } = await DB.query('profiles');
-          profilesList = pData || [];
+          const { data: sData } = await DB.query('submissions', { eq: ['id', subId] });
+          sub = sData?.[0];
         }
 
-        const area = document.getElementById('report-modal-area');
-        if (area) {
-          area.innerHTML = _renderReportModal(sub, null, I18n.t.bind(I18n), profilesList);
-          document.getElementById('close-report-modal')?.addEventListener('click', () => { area.innerHTML = ''; });
-          document.getElementById('report-modal-overlay')?.addEventListener('click', (e) => { if (e.target.id === 'report-modal-overlay') area.innerHTML = ''; });
+        if (sub) {
+          let profilesList = [];
+          if (DB.isMock()) {
+            profilesList = DB.mock.profiles;
+          } else {
+            const { data: pData } = await DB.query('profiles');
+            profilesList = pData || [];
+          }
+
+          const area = document.getElementById('report-modal-area');
+          if (area) {
+            area.innerHTML = _renderReportModal(sub, null, I18n.t.bind(I18n), profilesList);
+            document.getElementById('close-report-modal')?.addEventListener('click', () => { area.innerHTML = ''; });
+            document.getElementById('report-modal-overlay')?.addEventListener('click', (e) => { if (e.target.id === 'report-modal-overlay') area.innerHTML = ''; });
+          }
         }
+      } catch (err) {
+        Store.toast('error', 'Metin görüntülenemedi');
+      } finally {
+        Store.dispatch(Store.Events.LOADING, false);
       }
     });
   });

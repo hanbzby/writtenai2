@@ -148,7 +148,14 @@ async function query(table, { select, match, eq, upsert, insert, update, del, or
     let q = _supabase.from(table).select(select || '*');
     if (eq) q = q.eq(eq[0], eq[1]);
     if (match) Object.entries(match).forEach(([k, v]) => { q = q.eq(k, v); });
-    if (order) q = q.order(order[0], order[1]);
+    if (order) {
+      if (Array.isArray(order)) {
+        q = q.order(order[0], order[1] || { ascending: false });
+      } else if (typeof order === 'string') {
+        const parts = order.split('.');
+        q = q.order(parts[0], { ascending: parts[1] !== 'desc' });
+      }
+    }
     return await q;
   }
   // Mock mode
