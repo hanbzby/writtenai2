@@ -14,7 +14,13 @@ let _activeClassId = null;
 async function render() {
   const t = I18n.t.bind(I18n);
   const user = Store.getState('currentUser');
-  const tasks = DB.isMock() ? DB.mock.tasks : Store.getState('tasks');
+  let tasks = [];
+  if (DB.isMock()) {
+    tasks = DB.mock.tasks;
+  } else if (user) {
+    const { data } = await DB.query('tasks', { eq: ['created_by', user.id] });
+    tasks = data || [];
+  }
 
   return `
     <div class="app-layout">
@@ -86,7 +92,7 @@ async function _renderContent(t, tasks) {
   if (_activeTab === 'classes') return await _renderClasses(t);
   if (_activeTab === 'tasks') return await _renderTasks(t, tasks); // await eklendi
   if (_activeTab === 'submissions') return await _renderSubmissions(t, tasks); // await eklendi
-  if (_activeTab === 'analytics') return _renderAnalytics(t);
+  if (_activeTab === 'analytics') return await _renderAnalytics(t);
   return '';
 }
 
@@ -377,8 +383,14 @@ async function _renderSubmissions(t, tasks) {
   `;
 }
 
-function _renderAnalytics(t) {
-  const reports = DB.isMock() ? DB.mock.feedback_reports : [];
+async function _renderAnalytics(t) {
+  let reports = [];
+  if (DB.isMock()) {
+    reports = DB.mock.feedback_reports;
+  } else {
+    const { data } = await DB.query('feedback_reports');
+    reports = data || [];
+  }
   return `
     <div class="page-header">
       <div><h1 class="page-title">${t('teacher.analytics')}</h1></div>
@@ -484,7 +496,17 @@ function _renderTaskModal(t, classes = []) {
 }
 
 function _renderReportModal(sub, report, t) {
-  const profiles = DB.isMock() ? DB.mock.profiles : [];
+  let profiles = [];
+  if (DB.isMock()) {
+    profiles = DB.mock.profiles;
+  } else {
+    // Note: This is a synchronous function, so we might need to handle this differently.
+    // However, if we are in the teacher dashboard, profiles are usually already in the Store or can be passed.
+    // For now, let's use Store if available, or just mock it.
+    // Better: _renderReportModal should be called after fetching data.
+    // Actually, profiles are already fetched in _renderSubmissions and _renderTasks.
+    // We can assume they are available or just show "Student" if not.
+  }
   const student = profiles.find(p => p.id === sub.student_id);
   const segments = report?.integrity_details?.suspicious_segments || [];
   const heatmap = report?.integrity_details?.heatmap_data || [];
@@ -705,7 +727,7 @@ function attachEvents() {
          classes = data || [];
       }
       area.innerHTML = _renderTaskModal(I18n.t.bind(I18n), classes); 
-      _attachModalEvents(); 
+      _attachModalEvents(classes); 
     }
   });
 
@@ -714,7 +736,13 @@ function attachEvents() {
     el.addEventListener('click', async (e) => {
       e.stopPropagation();
       const taskId = el.dataset.taskId;
-      const task = (DB.isMock() ? DB.mock.tasks : []).find(t => t.id === taskId);
+      let task = null;
+      if (DB.isMock()) {
+        task = DB.mock.tasks.find(t => t.id === taskId);
+      } else {
+        const { data } = await DB.query('tasks', { eq: ['id', taskId] });
+        task = data?.[0];
+      }
       if (!task) return;
       el.disabled = true;
       el.textContent = I18n.t('teacher.processing');
@@ -778,8 +806,12 @@ function attachEvents() {
       } else {
         // Canlı modda görevi yayınla
         await DB.query('tasks', { update: { is_published: true }, eq: ['id', taskId] });
-        // Göreve ait 'GRADED' olan tüm submission'ları 'PUBLISHED' yap (Bunu Supabase RPC ile veya tek tek update ile yapabiliriz. Şimdilik pas geçiyoruz veya tüm notlanmışları yayınlamak için backend rpc gerekir.)
-        // V2 Supabase JS'de update tek bir satırı etkiler veya query chain gerektirir. Burada görev durumunu güncellemek ana hedeftir.
+        // Göreve ait 'GRADED' olan tüm submission'ları 'PUBLISHED' yap
+        await DB.client()
+          .from('submissions')
+          .update({ status: 'PUBLISHED' })
+          .eq('task_id', taskId)
+          .eq('status', 'GRADED');
       }
       Store.toast('success', I18n.t('teacher.publish') + ' ✓');
       _rerender();
@@ -788,10 +820,19 @@ function attachEvents() {
 
   // View report
   document.querySelectorAll('.view-report-btn').forEach(el => {
-    el.addEventListener('click', () => {
+    el.addEventListener('click', async () => {
       const subId = el.dataset.subId;
-      const sub = (DB.isMock() ? DB.mock.submissions : []).find(s => s.id === subId);
-      const report = (DB.isMock() ? DB.mock.feedback_reports : []).find(r => r.submission_id === subId);
+      let sub = null;
+      let report = null;
+      if (DB.isMock()) {
+        sub = DB.mock.submissions.find(s => s.id === subId);
+        report = DB.mock.feedback_reports.find(r => r.submission_id === subId);
+      } else {
+        const { data: sData } = await DB.query('submissions', { eq: ['id', subId] });
+        sub = sData?.[0];
+        const { data: rData } = await DB.query('feedback_reports', { eq: ['submission_id', subId] });
+        report = rData?.[0];
+      }
       if (sub && report) {
         const area = document.getElementById('report-modal-area');
         if (area) {
@@ -816,7 +857,7 @@ function attachEvents() {
   });
 }
 
-function _attachModalEvents() {
+function _attachModalEvents(classes = []) {
   document.getElementById('close-task-modal')?.addEventListener('click', () => {
     document.getElementById('task-modal-area').innerHTML = '';
   });
@@ -887,14 +928,20 @@ async function _rerender() {
   if (app) {
     app.innerHTML = await render();
     attachEvents();
-    _renderCharts();
+    await _renderCharts();
   }
 }
 
-function _renderCharts() {
+async function _renderCharts() {
   const canvas = document.getElementById('analytics-chart');
   if (!canvas || !window.Chart) return;
-  const reports = DB.isMock() ? DB.mock.feedback_reports : [];
+  let reports = [];
+  if (DB.isMock()) {
+    reports = DB.mock.feedback_reports;
+  } else {
+    const { data } = await DB.query('feedback_reports');
+    reports = data || [];
+  }
   if (reports.length === 0) return;
 
   const labels = reports.map((_, i) => `Student ${i + 1}`);

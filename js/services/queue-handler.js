@@ -20,8 +20,17 @@ const QueueHandler = {
    * @param {Object} task - Task object with criteria
    */
   async processTask(taskId, task) {
-    const submissions = (DB.isMock() ? DB.mock.submissions : [])
-      .filter(s => s.task_id === taskId && s.status === 'SUBMITTED');
+    let submissions = [];
+    if (DB.isMock()) {
+      submissions = DB.mock.submissions.filter(s => s.task_id === taskId && s.status === 'SUBMITTED');
+    } else {
+      const { data } = await DB.client()
+        .from('submissions')
+        .select('*')
+        .eq('task_id', taskId)
+        .eq('status', 'SUBMITTED');
+      submissions = data || [];
+    }
 
     if (submissions.length === 0) return;
 
@@ -77,7 +86,7 @@ const QueueHandler = {
       const integrity = await Integrity.analyze(submission.content);
       // 3. Store results
       const report = {
-        id: 'fr-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        id: DB.generateUUID(),
         submission_id: submission.id,
         plagiarism_score: integrity.plagiarism_score,
         ai_probability_score: integrity.ai_probability_score,
