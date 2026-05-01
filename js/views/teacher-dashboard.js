@@ -15,14 +15,9 @@ let _realtimeChannel = null;
 async function render() {
   const t = I18n.t.bind(I18n);
   const user = Store.getState('currentUser');
-  let tasks = [];
-  if (DB.isMock()) {
-    tasks = DB.mock.tasks.filter(t => t.created_by === user?.id);
-  } else {
-    const { data } = await DB.query('tasks', { eq: ['created_by', user?.id] });
-    tasks = data || [];
-  }
-  tasks.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  
+  // Use data from Store for rendering
+  const tasks = Store.getState('tasks') || [];
 
   return `
     <div class="app-layout">
@@ -30,10 +25,59 @@ async function render() {
       <div class="sidebar-overlay" id="teacher-sidebar-overlay"></div>
       <div class="main-content" id="teacher-main">
         ${_renderMobileHeader(t)}
-        ${await _renderContent(t, tasks)}
+        ${_renderContent(t, tasks)}
       </div>
     </div>
   `;
+}
+
+/**
+ * Heavy lift: Fetch everything and update Store
+ */
+async function refreshData() {
+  try {
+    const user = Store.getState('currentUser');
+    if (!user) return;
+
+    let classes = [], tasks = [], submissions = [], reports = [], profiles = [];
+
+    if (DB.isMock()) {
+      classes = DB.mock.classes.filter(c => c.teacher_id === user.id);
+      tasks = DB.mock.tasks.filter(t => t.created_by === user.id);
+      submissions = DB.mock.submissions;
+      reports = DB.mock.feedback_reports;
+      profiles = DB.mock.profiles;
+    } else {
+      // Parallel fetch for speed
+      const [clsRes, tskRes, subRes, repRes, profRes] = await Promise.all([
+        DB.query('classes', { eq: ['teacher_id', user.id] }),
+        DB.query('tasks', { eq: ['created_by', user.id] }),
+        DB.query('submissions'),
+        DB.query('feedback_reports'),
+        DB.query('profiles')
+      ]);
+
+      classes = clsRes.data || [];
+      tasks = tskRes.data || [];
+      submissions = subRes.data || [];
+      reports = repRes.data || [];
+      profiles = profRes.data || [];
+    }
+
+    // Sort tasks
+    tasks.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    // Update Store
+    Store.dispatch('REFRESH_TEACHER_DATA', {
+      userClasses: classes,
+      tasks: tasks,
+      submissions: submissions,
+      feedbackReports: reports,
+      profiles: profiles
+    });
+  } catch (err) {
+    console.error("[Dashboard] Refresh failed", err);
+  }
 }
 
 function _renderMobileHeader(t) {
@@ -98,32 +142,13 @@ async function _renderContent(t, tasks) {
   return '';
 }
 
-async function _renderClasses(t) {
+function _renderClasses(t) {
   const user = Store.getState('currentUser');
-  
-  if (!user || !user.id) {
-    return `
-      <div class="skeleton-wrap" style="padding: var(--sp-6);">
-        <div class="skeleton-box" style="width: 250px; height: 36px; margin-bottom: var(--sp-8);"></div>
-        <div class="class-grid">
-          <div class="skeleton-box" style="height: 140px;"></div>
-          <div class="skeleton-box" style="height: 140px;"></div>
-          <div class="skeleton-box" style="height: 140px;"></div>
-        </div>
-      </div>
-    `;
-  }
+  const classes = Store.getState('userClasses') || [];
+  const enrollments = Store.getState('enrollments') || [];
+  const tasksList = Store.getState('tasks') || [];
 
-  const { data: classes = [] } = await DB.query('classes', { eq: ['teacher_id', user.id] });
-  
-  let enrollments = [];
-  let dbTasks = [];
-  if (!DB.isMock() && classes.length > 0) {
-    const { data: eData } = await DB.query('class_enrollments');
-    enrollments = eData || [];
-    const { data: tData } = await DB.query('tasks');
-    dbTasks = tData || [];
-  }
+  if (!user || !user.id) return `<div class="p-6">Yükleniyor...</div>`;
 
   return `
     <div class="page-header">
@@ -132,8 +157,8 @@ async function _renderClasses(t) {
     </div>
     <div class="class-grid">
       ${classes.map(cls => {
-        const enrolled = DB.isMock() ? DB.mock.class_enrollments.filter(e => e.class_id === cls.id).length : enrollments.filter(e => e.class_id === cls.id).length;
-        const taskCount = DB.isMock() ? DB.mock.tasks.filter(tk => tk.class_id === cls.id).length : dbTasks.filter(tk => tk.class_id === cls.id).length;
+        const enrolledCount = enrollments.filter(e => e.class_id === cls.id).length;
+        const taskCount = tasksList.filter(tk => tk.class_id === cls.id).length;
         return `
           <div class="class-card ${_activeClassId === cls.id ? 'active' : ''}" data-class-id="${cls.id}">
             <div class="class-card-header" style="align-items: center;">
@@ -144,7 +169,7 @@ async function _renderClasses(t) {
               </div>
             </div>
             <div class="class-card-meta mt-2" style="font-size: 0.85rem; color: var(--text-muted); display: flex; gap: 16px;">
-              <span style="display: flex; align-items: center; gap: 6px;">👥 ${enrolled} Öğrenci</span>
+              <span style="display: flex; align-items: center; gap: 6px;">👥 ${enrolledCount} Öğrenci</span>
               <span style="display: flex; align-items: center; gap: 6px;">📋 ${taskCount} Görev</span>
             </div>
           </div>
@@ -159,61 +184,21 @@ async function _renderClasses(t) {
       ` : ''}
     </div>
     <div id="class-modal-area"></div>
-    <div id="class-detail-area"></div>
   `;
 }
 
-async function _renderTasks(t, tasks) {
-  if (!DB.isMock()) {
-     const { data: dbTasks } = await DB.query('tasks', { eq: ['created_by', Store.getState('currentUser')?.id] });
-     tasks = dbTasks || [];
-  }
-  tasks.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+function _renderTasks(t, tasks) {
+  const user = Store.getState('currentUser');
+  const subs = Store.getState('submissions') || [];
+  const reports = Store.getState('feedbackReports') || [];
+  const profiles = Store.getState('profiles') || [];
+  const enrollmentsList = Store.getState('enrollments') || [];
+  const classes = Store.getState('userClasses') || [];
 
   if (_activeClassId) tasks = tasks.filter(tk => tk.class_id === _activeClassId);
   
-  let activeClassName = '';
-  let totalStudents = 0;
-  let subs = [];
-  let reports = [];
-  let profiles = [];
-  let enrollmentsList = [];
-
-  if (DB.isMock()) {
-    activeClassName = _activeClassId ? DB.mock.classes.find(c => c.id === _activeClassId)?.class_name || '' : '';
-    totalStudents = _activeClassId ? DB.mock.class_enrollments.filter(e => e.class_id === _activeClassId).length : DB.mock.profiles.filter(p => p.role === 'STUDENT').length;
-    subs = DB.mock.submissions;
-    reports = DB.mock.feedback_reports;
-    profiles = DB.mock.profiles;
-    enrollmentsList = DB.mock.class_enrollments;
-  } else {
-    const { data: sData } = await DB.query('submissions');
-    subs = sData || [];
-    
-    const { data: rData } = await DB.query('feedback_reports');
-    reports = rData || [];
-
-    const { data: pData } = await DB.query('profiles');
-    profiles = pData || [];
-
-    const { data: eData } = await DB.query('class_enrollments');
-    enrollmentsList = eData || [];
-    
-    if (_activeClassId) {
-      const { data: cls } = await DB.query('classes', { eq: ['id', _activeClassId] });
-      activeClassName = cls?.[0]?.class_name || '';
-      const { data: enr } = await DB.query('class_enrollments', { eq: ['class_id', _activeClassId] });
-      totalStudents = (enr || []).length;
-    } else {
-      const { data: cls } = await DB.query('classes', { eq: ['teacher_id', Store.getState('currentUser')?.id] });
-      const classIds = (cls || []).map(c => c.id);
-      if (classIds.length > 0) {
-        const { data: enr } = await DB.query('class_enrollments');
-        const myEnr = (enr || []).filter(e => classIds.includes(e.class_id));
-        totalStudents = new Set(myEnr.map(e => e.student_id)).size;
-      }
-    }
-  }
+  const activeClassName = _activeClassId ? classes.find(c => c.id === _activeClassId)?.class_name || '' : '';
+  const totalStudents = _activeClassId ? enrollmentsList.filter(e => e.class_id === _activeClassId).length : profiles.filter(p => p.role === 'STUDENT').length;
 
   const totalSubmitted = subs.filter(s => tasks.some(tk => tk.id === s.task_id)).length;
   const graded = subs.filter(s => tasks.some(tk => tk.id === s.task_id) && (s.status === 'GRADED' || s.status === 'PUBLISHED')).length;
@@ -318,26 +303,10 @@ async function _renderTasks(t, tasks) {
   `;
 }
 
-async function _renderSubmissions(t, tasks) {
-  let subs = [];
-  let reports = [];
-  let profiles = [];
-
-  if (DB.isMock()) {
-    subs = DB.mock.submissions;
-    reports = DB.mock.feedback_reports;
-    profiles = DB.mock.profiles;
-  } else {
-    const { data: dbSubs } = await DB.query('submissions');
-    subs = dbSubs || [];
-    
-    const { data: dbReports } = await DB.query('feedback_reports');
-    reports = dbReports || [];
-    
-    const { data: dbProfiles } = await DB.query('profiles');
-    profiles = dbProfiles || [];
-    Store.dispatch(Store.Events.PROFILES_LOADED, { profiles });
-  }
+function _renderSubmissions(t, tasks) {
+  const subs = Store.getState('submissions') || [];
+  const reports = Store.getState('feedbackReports') || [];
+  const profiles = Store.getState('profiles') || [];
   
   const teacherTaskIds = tasks.map(t => t.id);
   const relevantSubs = subs.filter(s => teacherTaskIds.includes(s.task_id));
@@ -418,28 +387,10 @@ async function _renderSubmissions(t, tasks) {
   `;
 }
 
-async function _renderAnalytics(t) {
-  let reports = [];
-  let subs = [];
-  let tasks = [];
-  let classes = [];
-
-  if (DB.isMock()) {
-    reports = DB.mock.feedback_reports;
-    subs = DB.mock.submissions;
-    tasks = DB.mock.tasks;
-    classes = DB.mock.classes.filter(c => c.teacher_id === Store.getState('currentUser')?.id);
-  } else {
-    const { data: rData } = await DB.query('feedback_reports');
-    reports = rData || [];
-    const { data: sData } = await DB.query('submissions');
-    subs = sData || [];
-    const { data: allTasks } = await DB.query('tasks');
-    tasks = (allTasks || []).filter(tk => classes.map(c => c.id).includes(tk.class_id));
-    tasks.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    const { data: cData } = await DB.query('classes', { eq: ['teacher_id', Store.getState('currentUser')?.id] });
-    classes = cData || [];
-  }
+function _renderAnalytics(t, tasks) {
+  const reports = Store.getState('feedbackReports') || [];
+  const subs = Store.getState('submissions') || [];
+  const classes = Store.getState('userClasses') || [];
 
   const classAnalytics = classes.map(cls => {
     const classTasks = tasks.filter(tk => tk.class_id === cls.id);
@@ -656,6 +607,19 @@ function attachEvents() {
       _rerender();
     });
   });
+
+  // Real-time subscription
+  if (!DB.isMock() && !_realtimeChannel) {
+    _realtimeChannel = DB.client()
+      .channel('teacher_realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'submissions' }, () => {
+        _debouncedRerender();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'feedback_reports' }, () => {
+        _debouncedRerender();
+      })
+      .subscribe();
+  }
 
   // Language toggle
   document.querySelectorAll('.lang-toggle button[data-lang]').forEach(el => {
@@ -1069,30 +1033,25 @@ async function _rerender() {
   if (app) {
     app.innerHTML = await render();
     attachEvents();
-    await _renderCharts();
+    _renderCharts();
   }
 }
 
-async function _renderCharts() {
+let _rerenderTimeout = null;
+function _debouncedRerender() {
+  if (_rerenderTimeout) clearTimeout(_rerenderTimeout);
+  _rerenderTimeout = setTimeout(() => {
+    refreshData().then(() => _rerender());
+  }, 500);
+}
+
+function _renderCharts() {
   const canvases = document.querySelectorAll('canvas[id^="chart-"]');
   if (canvases.length === 0 || !window.Chart) return;
 
-  let reports = [];
-  let subs = [];
-  let tasks = [];
-
-  if (DB.isMock()) {
-    reports = DB.mock.feedback_reports;
-    subs = DB.mock.submissions;
-    tasks = DB.mock.tasks;
-  } else {
-    const { data: rData } = await DB.query('feedback_reports');
-    reports = rData || [];
-    const { data: sData } = await DB.query('submissions');
-    subs = sData || [];
-    const { data: tData } = await DB.query('tasks');
-    tasks = tData || [];
-  }
+  const reports = Store.getState('feedbackReports') || [];
+  const subs = Store.getState('submissions') || [];
+  const tasks = Store.getState('tasks') || [];
 
   canvases.forEach(canvas => {
     const classId = canvas.id.replace('chart-', '');
@@ -1134,4 +1093,4 @@ function cleanup() {
   }
 }
 
-export default { render, attachEvents, cleanup, afterMount: _renderCharts };
+export default { render, refreshData, attachEvents, cleanup, afterMount: _renderCharts };

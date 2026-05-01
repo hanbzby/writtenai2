@@ -13,51 +13,67 @@ let _activeTab = 'tasks';
 let _selectedTask = null;
 let _countdownInterval = null;
 
-async function render() {
+function render() {
+  const t = I18n.t.bind(I18n);
+  const user = Store.getState('currentUser');
+  
+  const tasks = Store.getState('tasks') || [];
+  const myClasses = Store.getState('userClasses') || [];
+
+  return `
+    <div class="app-layout">
+      ${_renderSidebar(user, t)}
+      <div class="sidebar-overlay" id="student-sidebar-overlay"></div>
+      <div class="main-content" id="student-main">
+        ${_renderMobileHeader(t)}
+        ${_renderContent(t, user, tasks, myClasses)}
+      </div>
+    </div>
+  `;
+}
+
+async function refreshData() {
   try {
-    const t = I18n.t.bind(I18n);
     const user = Store.getState('currentUser');
-    
-    let myClassIds = [];
-    let tasks = [];
-    let myClasses = [];
+    if (!user) return;
+
+    let myClassIds = [], tasks = [], myClasses = [], subs = [], reports = [];
 
     if (DB.isMock()) {
-      myClassIds = DB.mock.class_enrollments.filter(ce => ce.student_id === user?.id).map(ce => ce.class_id);
+      myClassIds = DB.mock.class_enrollments.filter(ce => ce.student_id === user.id).map(ce => ce.class_id);
       tasks = DB.mock.tasks.filter(tk => myClassIds.includes(tk.class_id));
       myClasses = myClassIds.map(id => DB.mock.classes.find(c => c.id === id)).filter(Boolean);
+      subs = DB.mock.submissions.filter(s => s.student_id === user.id);
+      reports = DB.mock.feedback_reports.filter(r => subs.some(s => s.id === r.submission_id));
     } else {
-      // Stage 3: Get tasks via class enrollments (Live mode)
-      const { data: enrolls } = await DB.query('class_enrollments', { eq: ['student_id', user?.id] });
+      const { data: enrolls } = await DB.query('class_enrollments', { eq: ['student_id', user.id] });
       myClassIds = (enrolls || []).map(ce => ce.class_id);
       
       if (myClassIds.length > 0) {
-        const { data: allTasks } = await DB.query('tasks');
-        tasks = (allTasks || []).filter(tk => myClassIds.includes(tk.class_id));
-        tasks.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        const [tskRes, clsRes, subRes, repRes] = await Promise.all([
+          DB.query('tasks'),
+          DB.query('classes'),
+          DB.query('submissions', { eq: ['student_id', user.id] }),
+          DB.query('feedback_reports')
+        ]);
 
-        const { data: allClasses } = await DB.query('classes');
-        myClasses = (allClasses || []).filter(c => myClassIds.includes(c.id));
+        tasks = (tskRes.data || []).filter(tk => myClassIds.includes(tk.class_id));
+        myClasses = (clsRes.data || []).filter(c => myClassIds.includes(c.id));
+        subs = subRes.data || [];
+        reports = (repRes.data || []).filter(r => subs.some(s => s.id === r.submission_id));
       }
-      
-      // Fetch submissions to ensure status is correct
-      const { data: subs } = await DB.query('submissions', { eq: ['student_id', user?.id] });
-      Store.dispatch(Store.Events.SUBMISSIONS_LOADED, { submissions: subs || [] });
     }
 
-    return `
-      <div class="app-layout">
-        ${_renderSidebar(user, t)}
-        <div class="sidebar-overlay" id="student-sidebar-overlay"></div>
-        <div class="main-content" id="student-main">
-          ${_renderMobileHeader(t)}
-          ${_renderContent(t, user, tasks, myClasses)}
-        </div>
-      </div>
-    `;
+    tasks.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    Store.dispatch('REFRESH_STUDENT_DATA', {
+      tasks,
+      userClasses: myClasses,
+      submissions: subs,
+      feedbackReports: reports
+    });
   } catch (err) {
-    alert("Render Hatası: " + err.message);
-    return `<div style="padding: 20px; color: red;">Render Error: ${err.message}</div>`;
+    console.error("[Student] Refresh failed", err);
   }
 }
 
@@ -430,7 +446,7 @@ function _startCountdown() {
 
 async function _rerender() {
   const app = document.getElementById('app');
-  if (app) { app.innerHTML = await render(); attachEvents(); }
+  if (app) { app.innerHTML = render(); attachEvents(); }
 }
 
 function _showJoinModal() {
@@ -512,4 +528,4 @@ function cleanup() {
   if (_countdownInterval) { clearInterval(_countdownInterval); _countdownInterval = null; }
 }
 
-export default { render, attachEvents, cleanup };
+export default { render, refreshData, attachEvents, cleanup };

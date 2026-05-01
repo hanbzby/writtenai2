@@ -35,25 +35,16 @@ async function renderView(state) {
 
   switch (view) {
     case 'teacher':
+      // Fetch initial data before rendering
+      await TeacherDashboard.refreshData();
       app.innerHTML = await TeacherDashboard.render();
       TeacherDashboard.attachEvents();
       if (TeacherDashboard.afterMount) TeacherDashboard.afterMount();
       break;
     case 'student':
-      app.innerHTML = await StudentDashboard.render();
+      await StudentDashboard.refreshData();
+      app.innerHTML = StudentDashboard.render();
       StudentDashboard.attachEvents();
-      
-      // Load submissions async so draft can be populated
-      const user = Store.getState('currentUser');
-      if (user) {
-        import('./services/submission-service.js').then(module => {
-          module.default.loadSubmissionsForUser().then(async () => {
-            // Re-render if there are drafts/submissions loaded
-            app.innerHTML = await StudentDashboard.render();
-            StudentDashboard.attachEvents();
-          });
-        });
-      }
       break;
     case 'login':
     default:
