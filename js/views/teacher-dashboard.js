@@ -150,9 +150,35 @@ async function _renderTasks(t, tasks) {
   }
 
   if (_activeClassId) tasks = tasks.filter(tk => tk.class_id === _activeClassId);
-  const activeClassName = _activeClassId ? (DB.isMock() ? DB.mock.classes.find(c => c.id === _activeClassId)?.class_name : '') : '';
-  const subs = DB.isMock() ? DB.mock.submissions : [];
-  const totalStudents = DB.isMock() ? DB.mock.profiles.filter(p => p.role === 'STUDENT').length : 0;
+  
+  let activeClassName = '';
+  let totalStudents = 0;
+  let subs = [];
+
+  if (DB.isMock()) {
+    activeClassName = _activeClassId ? DB.mock.classes.find(c => c.id === _activeClassId)?.class_name || '' : '';
+    totalStudents = _activeClassId ? DB.mock.class_enrollments.filter(e => e.class_id === _activeClassId).length : DB.mock.profiles.filter(p => p.role === 'STUDENT').length;
+    subs = DB.mock.submissions;
+  } else {
+    const { data: sData } = await DB.query('submissions');
+    subs = sData || [];
+    
+    if (_activeClassId) {
+      const { data: cls } = await DB.query('classes', { eq: ['id', _activeClassId] });
+      activeClassName = cls?.[0]?.class_name || '';
+      const { data: enr } = await DB.query('class_enrollments', { eq: ['class_id', _activeClassId] });
+      totalStudents = (enr || []).length;
+    } else {
+      const { data: cls } = await DB.query('classes', { eq: ['teacher_id', Store.getState('currentUser')?.id] });
+      const classIds = (cls || []).map(c => c.id);
+      if (classIds.length > 0) {
+        const { data: enr } = await DB.query('class_enrollments');
+        const myEnr = (enr || []).filter(e => classIds.includes(e.class_id));
+        totalStudents = new Set(myEnr.map(e => e.student_id)).size;
+      }
+    }
+  }
+
   const totalSubmitted = subs.filter(s => tasks.some(tk => tk.id === s.task_id)).length;
   const graded = subs.filter(s => tasks.some(tk => tk.id === s.task_id) && (s.status === 'GRADED' || s.status === 'PUBLISHED')).length;
 
@@ -331,6 +357,12 @@ function _renderTaskModal(t, classes = []) {
           <div class="form-group">
             <label class="form-label">${t('task.deadline')} *</label>
             <input type="datetime-local" id="tf-deadline" class="input" required>
+            <div class="flex gap-2 mt-2">
+              <button type="button" class="btn btn-ghost btn-sm quick-deadline" data-hours="1">+1 Saat</button>
+              <button type="button" class="btn btn-ghost btn-sm quick-deadline" data-hours="3">+3 Saat</button>
+              <button type="button" class="btn btn-ghost btn-sm quick-deadline" data-hours="24">+24 Saat</button>
+              <button type="button" class="btn btn-ghost btn-sm quick-deadline" data-hours="168">+1 Hafta</button>
+            </div>
           </div>
           <div class="form-group">
             <label class="form-label">${t('task.criteria')}</label>
@@ -693,20 +725,35 @@ function _attachModalEvents() {
   document.getElementById('task-modal-overlay')?.addEventListener('click', (e) => {
     if (e.target.id === 'task-modal-overlay') document.getElementById('task-modal-area').innerHTML = '';
   });
+  document.querySelectorAll('.quick-deadline').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const hours = parseInt(btn.dataset.hours);
+      const d = new Date(Date.now() + hours * 60 * 60 * 1000);
+      d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+      document.getElementById('tf-deadline').value = d.toISOString().slice(0, 16);
+    });
+  });
+
   document.getElementById('task-form')?.addEventListener('submit', async (e) => { // async eklendi
     e.preventDefault();
     const criteriaRaw = document.getElementById('tf-criteria').value;
     const criteria = criteriaRaw.split('\n').map(s => s.trim()).filter(Boolean);
     const classSelect = document.getElementById('tf-class');
+    const classId = (classSelect && classSelect.value) ? classSelect.value : null;
+
+    if (!classId && classes.length > 0) {
+      Store.toast('error', 'Lütfen bir sınıf seçin!');
+      return;
+    }
     
     const newTask = {
       id: DB.generateUUID(),
       created_by: Store.getState('currentUser')?.id,
-      class_id: classSelect ? classSelect.value : null,
+      class_id: classId,
       title: document.getElementById('tf-title').value,
       description: document.getElementById('tf-desc').value,
       deadline_datetime: new Date(document.getElementById('tf-deadline').value).toISOString(),
-      custom_criteria: JSON.stringify(criteria),
+      custom_criteria: criteria, // JSON.stringify yerine doğrudan array olarak gönder
       language_policy: document.getElementById('tf-lang').value,
       scoring_framework: document.getElementById('tf-framework').value,
       show_integrity_to_student: document.getElementById('tf-show-integrity').checked,
