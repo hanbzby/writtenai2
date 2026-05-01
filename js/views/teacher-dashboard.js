@@ -492,16 +492,20 @@ function attachEvents() {
       e.preventDefault();
       const user = Store.getState('currentUser');
       
+      // Kullanıcı kimliği doğrulaması
+      if (!user || !user.id) {
+        Store.toast('error', 'Oturum hatası! Lütfen tekrar giriş yapın.');
+        return;
+      }
+
       const cls = { 
-          id: 'class-' + Date.now().toString(36), 
-          teacher_id: user?.id, 
+          teacher_id: user.id, // user?.id yerine doğrudan kesin ID
           class_name: document.getElementById('cf-name').value, 
-          join_code: DB.generateJoinCode(), 
-          created_at: new Date().toISOString() 
+          join_code: DB.generateJoinCode()
+          // id ve created_at kısımları Supabase tarafından otomatik atanacak
       };
 
       try {
-        // Supabase'e gerçek kayıt isteği
         const { error } = await DB.query('classes', { insert: cls });
         
         if (error) throw error;
