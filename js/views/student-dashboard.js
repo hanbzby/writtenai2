@@ -14,41 +14,46 @@ let _selectedTask = null;
 let _countdownInterval = null;
 
 async function render() {
-  const t = I18n.t.bind(I18n);
-  const user = Store.getState('currentUser');
-  
-  let myClassIds = [];
-  let tasks = [];
-  let myClasses = [];
-
-  if (DB.isMock()) {
-    myClassIds = DB.mock.class_enrollments.filter(ce => ce.student_id === user?.id).map(ce => ce.class_id);
-    tasks = DB.mock.tasks.filter(tk => myClassIds.includes(tk.class_id));
-    myClasses = myClassIds.map(id => DB.mock.classes.find(c => c.id === id)).filter(Boolean);
-  } else {
-    // Stage 3: Get tasks via class enrollments (Live mode)
-    const { data: enrolls } = await DB.query('class_enrollments', { eq: ['student_id', user.id] });
-    myClassIds = (enrolls || []).map(ce => ce.class_id);
+  try {
+    const t = I18n.t.bind(I18n);
+    const user = Store.getState('currentUser');
     
-    if (myClassIds.length > 0) {
-      const { data: allTasks } = await DB.query('tasks');
-      tasks = (allTasks || []).filter(tk => myClassIds.includes(tk.class_id));
+    let myClassIds = [];
+    let tasks = [];
+    let myClasses = [];
 
-      const { data: allClasses } = await DB.query('classes');
-      myClasses = (allClasses || []).filter(c => myClassIds.includes(c.id));
+    if (DB.isMock()) {
+      myClassIds = DB.mock.class_enrollments.filter(ce => ce.student_id === user?.id).map(ce => ce.class_id);
+      tasks = DB.mock.tasks.filter(tk => myClassIds.includes(tk.class_id));
+      myClasses = myClassIds.map(id => DB.mock.classes.find(c => c.id === id)).filter(Boolean);
+    } else {
+      // Stage 3: Get tasks via class enrollments (Live mode)
+      const { data: enrolls } = await DB.query('class_enrollments', { eq: ['student_id', user?.id] });
+      myClassIds = (enrolls || []).map(ce => ce.class_id);
+      
+      if (myClassIds.length > 0) {
+        const { data: allTasks } = await DB.query('tasks');
+        tasks = (allTasks || []).filter(tk => myClassIds.includes(tk.class_id));
+
+        const { data: allClasses } = await DB.query('classes');
+        myClasses = (allClasses || []).filter(c => myClassIds.includes(c.id));
+      }
     }
-  }
 
-  return `
-    <div class="app-layout">
-      ${_renderSidebar(user, t)}
-      <div class="sidebar-overlay" id="student-sidebar-overlay"></div>
-      <div class="main-content" id="student-main">
-        ${_renderMobileHeader(t)}
-        ${_renderContent(t, user, tasks, myClasses)}
+    return `
+      <div class="app-layout">
+        ${_renderSidebar(user, t)}
+        <div class="sidebar-overlay" id="student-sidebar-overlay"></div>
+        <div class="main-content" id="student-main">
+          ${_renderMobileHeader(t)}
+          ${_renderContent(t, user, tasks, myClasses)}
+        </div>
       </div>
-    </div>
-  `;
+    `;
+  } catch (err) {
+    alert("Render Hatası: " + err.message);
+    return `<div style="padding: 20px; color: red;">Render Error: ${err.message}</div>`;
+  }
 }
 
 function _renderMobileHeader(t) {
@@ -412,41 +417,49 @@ function _showJoinModal() {
   document.getElementById('join-modal-overlay')?.addEventListener('click', (e) => { if (e.target.id === 'join-modal-overlay') area.innerHTML = ''; });
   document.getElementById('join-code-input')?.focus();
   document.getElementById('join-code-submit')?.addEventListener('click', async () => {
-    const code = document.getElementById('join-code-input')?.value?.trim().toUpperCase();
-    const errEl = document.getElementById('join-error');
-    if (!code || code.length !== 6) { errEl.textContent = I18n.t('class.invalidCode'); errEl.style.display = 'block'; return; }
-    
-    let cls = null;
-    if (DB.isMock()) {
-      cls = DB.mock.classes.find(c => c.join_code === code);
-    } else {
-      const { data } = await DB.query('classes', { eq: ['join_code', code] });
-      cls = data?.[0] || null;
-    }
+    try {
+      const code = document.getElementById('join-code-input')?.value?.trim().toUpperCase();
+      const errEl = document.getElementById('join-error');
+      if (!code || code.length !== 6) { errEl.textContent = I18n.t('class.invalidCode'); errEl.style.display = 'block'; return; }
+      
+      let cls = null;
+      if (DB.isMock()) {
+        cls = DB.mock.classes.find(c => c.join_code === code);
+      } else {
+        const { data, error } = await DB.query('classes', { eq: ['join_code', code] });
+        if (error) { alert("Sınıf aranırken hata: " + error.message); return; }
+        cls = data?.[0] || null;
+      }
 
-    if (!cls) { errEl.textContent = I18n.t('class.invalidCode'); errEl.style.display = 'block'; return; }
-    const user = Store.getState('currentUser');
-    
-    let already = false;
-    if (DB.isMock()) {
-      already = DB.mock.class_enrollments.some(ce => ce.student_id === user.id && ce.class_id === cls.id);
-    } else {
-      const { data } = await DB.query('class_enrollments', { match: { student_id: user.id, class_id: cls.id } });
-      already = data && data.length > 0;
-    }
+      if (!cls) { errEl.textContent = I18n.t('class.invalidCode'); errEl.style.display = 'block'; return; }
+      const user = Store.getState('currentUser');
+      
+      let already = false;
+      if (DB.isMock()) {
+        already = DB.mock.class_enrollments.some(ce => ce.student_id === user?.id && ce.class_id === cls.id);
+      } else {
+        const { data, error } = await DB.query('class_enrollments', { match: { student_id: user?.id, class_id: cls.id } });
+        if (error) { alert("Kayıt kontrolü hatası: " + error.message); return; }
+        already = data && data.length > 0;
+      }
 
-    if (already) { errEl.textContent = I18n.t('class.alreadyJoined'); errEl.style.display = 'block'; return; }
-    
-    // Enroll
-    if (DB.isMock()) {
-      DB.mock.class_enrollments.push({ id: 'ce-' + Date.now().toString(36), student_id: user.id, class_id: cls.id, enrolled_at: new Date().toISOString() });
-    } else {
-      await DB.query('class_enrollments', { insert: { id: DB.generateUUID(), student_id: user.id, class_id: cls.id, enrolled_at: new Date().toISOString() } });
+      if (already) { errEl.textContent = I18n.t('class.alreadyJoined'); errEl.style.display = 'block'; return; }
+      
+      // Enroll
+      if (DB.isMock()) {
+        DB.mock.class_enrollments.push({ id: 'ce-' + Date.now().toString(36), student_id: user?.id, class_id: cls.id, enrolled_at: new Date().toISOString() });
+      } else {
+        const payload = { id: DB.generateUUID(), student_id: user?.id, class_id: cls.id, enrolled_at: new Date().toISOString() };
+        const { error } = await DB.query('class_enrollments', { insert: payload });
+        if (error) { alert("Sınıfa kayıt olunamadı: " + error.message); return; }
+      }
+      
+      Store.toast('success', I18n.t('class.joined') + ' — ' + cls.class_name);
+      area.innerHTML = '';
+      await _rerender();
+    } catch (err) {
+      alert("Beklenmeyen Hata: " + err.message);
     }
-    
-    Store.toast('success', I18n.t('class.joined') + ' — ' + cls.class_name);
-    area.innerHTML = '';
-    _rerender();
   });
 }
 
