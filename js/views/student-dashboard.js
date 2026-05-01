@@ -378,9 +378,9 @@ function _startCountdown() {
   }, 1000);
 }
 
-function _rerender() {
+async function _rerender() {
   const app = document.getElementById('app');
-  if (app) { app.innerHTML = render(); attachEvents(); }
+  if (app) { app.innerHTML = await render(); attachEvents(); }
 }
 
 function _showJoinModal() {
