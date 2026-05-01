@@ -170,4 +170,5 @@ async function query(table, { select, match, eq, upsert, insert, update, del, or
 }
 
 const DB = { init, isMock, client, query, mock, generateJoinCode };
+init(); // Auto-initialize on import
 export default DB;
