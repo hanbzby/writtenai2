@@ -60,7 +60,7 @@ const SubmissionService = {
       .select('id, status')
       .eq('task_id', taskId)
       .eq('student_id', user.id)
-      .single();
+      .maybeSingle();
 
     if (existing && existing.status === 'SUBMITTED') return;
 
@@ -106,7 +106,7 @@ const SubmissionService = {
       .select('id')
       .eq('task_id', taskId)
       .eq('student_id', user.id)
-      .single();
+      .maybeSingle();
 
     if (existing) {
       await window.supabaseClient.from('submissions').update(sub).eq('id', existing.id);

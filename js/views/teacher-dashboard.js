@@ -243,14 +243,23 @@ async function _renderTasks(t, tasks) {
 
 async function _renderSubmissions(t, tasks) {
   let subs = [];
+  let reports = [];
+  let profiles = [];
+
   if (DB.isMock()) {
     subs = DB.mock.submissions;
+    reports = DB.mock.feedback_reports;
+    profiles = DB.mock.profiles;
   } else {
     const { data: dbSubs } = await DB.query('submissions', { order: ['created_at', { ascending: false }] });
     subs = dbSubs || [];
+    
+    const { data: dbReports } = await DB.query('feedback_reports');
+    reports = dbReports || [];
+    
+    const { data: dbProfiles } = await DB.query('profiles');
+    profiles = dbProfiles || [];
   }
-  const reports = DB.isMock() ? DB.mock.feedback_reports : [];
-  const profiles = DB.isMock() ? DB.mock.profiles : [];
 
   return `
     <div class="page-header">
@@ -266,6 +275,7 @@ async function _renderSubmissions(t, tasks) {
             <th>${t('auth.fullName')}</th>
             <th>${t('teacher.tasks')}</th>
             <th>${t('common.status')}</th>
+            <th>Kelime Sayısı</th>
             <th>${t('integrity.riskScore')}</th>
             <th>${t('feedback.grade')}</th>
             <th>${t('common.actions')}</th>
@@ -284,6 +294,7 @@ async function _renderSubmissions(t, tasks) {
                 <td class="submission-name">${student?.full_name || 'Unknown'}</td>
                 <td class="text-sm text-muted">${task?.title || ''}</td>
                 <td><span class="badge ${statusBadge}">${t('status.' + sub.status)}</span></td>
+                <td>${sub.word_count || 0}</td>
                 <td>
                   ${risk !== null ? `<span class="badge ${isHighRisk ? 'badge-risk' : 'badge-neutral'}">${risk}%${isHighRisk ? ' ⚠' : ''}</span>` : '<span class="text-muted">—</span>'}
                 </td>
@@ -294,7 +305,7 @@ async function _renderSubmissions(t, tasks) {
               </tr>
             `;
           }).join('')}
-          ${subs.length === 0 ? `<tr><td colspan="6" class="text-center text-muted" style="padding:32px">${t('common.noData')}</td></tr>` : ''}
+          ${subs.length === 0 ? `<tr><td colspan="7" class="text-center text-muted" style="padding:32px">${t('common.noData')}</td></tr>` : ''}
         </tbody>
       </table>
     </div>
@@ -357,7 +368,8 @@ function _renderTaskModal(t, classes = []) {
           <div class="form-group">
             <label class="form-label">${t('task.deadline')} *</label>
             <input type="datetime-local" id="tf-deadline" class="input" required>
-            <div class="flex gap-2 mt-2">
+            <div class="flex gap-2 mt-2" style="flex-wrap:wrap">
+              <button type="button" class="btn btn-ghost btn-sm quick-deadline" data-minutes="5">+5 Dakika</button>
               <button type="button" class="btn btn-ghost btn-sm quick-deadline" data-hours="1">+1 Saat</button>
               <button type="button" class="btn btn-ghost btn-sm quick-deadline" data-hours="3">+3 Saat</button>
               <button type="button" class="btn btn-ghost btn-sm quick-deadline" data-hours="24">+24 Saat</button>
@@ -732,8 +744,9 @@ function _attachModalEvents() {
   });
   document.querySelectorAll('.quick-deadline').forEach(btn => {
     btn.addEventListener('click', () => {
-      const hours = parseInt(btn.dataset.hours);
-      const d = new Date(Date.now() + hours * 60 * 60 * 1000);
+      const hours = parseFloat(btn.dataset.hours || 0);
+      const minutes = parseFloat(btn.dataset.minutes || 0);
+      const d = new Date(Date.now() + (hours * 60 * 60 * 1000) + (minutes * 60 * 1000));
       d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
       document.getElementById('tf-deadline').value = d.toISOString().slice(0, 16);
     });
