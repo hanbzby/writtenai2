@@ -26,7 +26,7 @@ function renderToasts() {
 }
 
 // ── View Router ──
-function renderView(state) {
+async function renderView(state) {
   const view = state?.activeView || Store.getState('activeView');
 
   // Cleanup previous view
@@ -34,21 +34,21 @@ function renderView(state) {
 
   switch (view) {
     case 'teacher':
-      app.innerHTML = TeacherDashboard.render();
+      app.innerHTML = await TeacherDashboard.render();
       TeacherDashboard.attachEvents();
       if (TeacherDashboard.afterMount) TeacherDashboard.afterMount();
       break;
     case 'student':
-      app.innerHTML = StudentDashboard.render();
+      app.innerHTML = await StudentDashboard.render();
       StudentDashboard.attachEvents();
       
       // Load submissions async so draft can be populated
       const user = Store.getState('currentUser');
       if (user) {
         import('./services/submission-service.js').then(module => {
-          module.default.loadSubmissionsForUser().then(() => {
+          module.default.loadSubmissionsForUser().then(async () => {
             // Re-render if there are drafts/submissions loaded
-            app.innerHTML = StudentDashboard.render();
+            app.innerHTML = await StudentDashboard.render();
             StudentDashboard.attachEvents();
           });
         });
@@ -76,7 +76,7 @@ async function init() {
   const session = await Auth.checkSession();
   if (!session) {
     // No active session found, render login explicitly
-    renderView({ activeView: 'login' });
+    await renderView({ activeView: 'login' });
   } else {
     // If session exists, _setUser in checkSession already dispatched AUTH_CHANGED, 
     // which triggers renderView() to show the dashboard.
