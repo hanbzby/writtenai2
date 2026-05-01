@@ -181,8 +181,14 @@ async function query(table, { select, match, eq, upsert, insert, update, del, or
     if (idx >= 0) { Object.assign(mock[table][idx], update); saveMock(); return { data: [mock[table][idx]], error: null }; }
   }
   if (del && eq) {
-    const idx = mock[table].findIndex(r => r[eq[0]] === eq[1]);
-    if (idx >= 0) { mock[table].splice(idx, 1); saveMock(); return { data: null, error: null }; }
+    const before = mock[table].length;
+    mock[table] = mock[table].filter(r => r[eq[0]] !== eq[1]);
+    if (mock[table].length !== before) { saveMock(); return { data: null, error: null }; }
+  }
+  if (del && match) {
+    const before = mock[table].length;
+    mock[table] = mock[table].filter(r => !Object.entries(match).every(([k, v]) => r[k] === v));
+    if (mock[table].length !== before) { saveMock(); return { data: null, error: null }; }
   }
   return { data, error: null };
 }

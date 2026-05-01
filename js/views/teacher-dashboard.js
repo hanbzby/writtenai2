@@ -12,11 +12,9 @@ let _selectedTask = null;
 let _activeClassId = null;
 let _realtimeChannel = null;
 
-async function render() {
+function render() {
   const t = I18n.t.bind(I18n);
   const user = Store.getState('currentUser');
-  
-  // Use data from Store for rendering
   const tasks = Store.getState('tasks') || [];
 
   return `
@@ -249,16 +247,16 @@ function _renderTasks(t, tasks) {
             <div class="task-card-desc">${task.description || ''}</div>
             
             <div class="mt-4 pt-4" style="border-top: 1px solid var(--border)">
-              <div class="text-sm font-bold mb-2">Teslim Edenler (${taskSubs.length} / ${classStudents.length})</div>
+              <div class="text-sm font-bold mb-2">${t('teacher.submissions')} (${taskSubs.length} / ${classStudents.length})</div>
               ${taskSubs.length > 0 ? `
                 <table style="width: 100%; font-size: var(--text-xs); border-collapse: collapse; margin-bottom: var(--sp-2);">
                   <thead>
                     <tr style="border-bottom: 1px solid var(--border); text-align: left;">
-                      <th style="padding: 4px;">Öğrenci</th>
-                      <th style="padding: 4px;">Durum</th>
-                      <th style="padding: 4px;">Kelime</th>
-                      <th style="padding: 4px;">Not</th>
-                      <th style="padding: 4px;">İşlem</th>
+                      <th style="padding: 4px;">${t('auth.fullName')}</th>
+                      <th style="padding: 4px;">${t('common.status')}</th>
+                      <th style="padding: 4px;">${t('teacher.wordCount')}</th>
+                      <th style="padding: 4px;">${t('feedback.grade')}</th>
+                      <th style="padding: 4px;">${t('common.actions')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -283,13 +281,13 @@ function _renderTasks(t, tasks) {
                     }).join('')}
                   </tbody>
                 </table>
-              ` : `<div class="text-xs text-muted mb-2">Henüz teslim eden öğrenci yok.</div>`}
+              ` : `<div class="text-xs text-muted mb-2">${t('teacher.noSubmissions')}</div>`}
             </div>
 
             <div class="task-card-footer mt-4">
               <div class="task-card-meta">👥 ${classStudents.length} ${t('teacher.students')}</div>
               <div class="flex gap-2">
-                ${!deadline.expired && !task.is_published ? `<button class="btn btn-sm btn-warning end-early-btn" data-task-id="${task.id}">Süreyi Bitir</button>` : ''}
+                ${!deadline.expired && !task.is_published ? `<button class="btn btn-sm btn-warning end-early-btn" data-task-id="${task.id}">${t('teacher.endDeadline')}</button>` : ''}
                 ${deadline.expired && !task.is_published ? `<button class="btn btn-sm btn-secondary batch-btn" data-task-id="${task.id}">${t('teacher.batchProcess')}</button>` : ''}
                 ${deadline.expired && !task.is_published ? `<button class="btn btn-sm btn-success publish-btn" data-task-id="${task.id}">${t('teacher.publish')}</button>` : ''}
               </div>
@@ -300,6 +298,7 @@ function _renderTasks(t, tasks) {
     </div>
     <div id="task-modal-area"></div>
     <div id="processing-area"></div>
+    <div id="report-modal-area"></div>
   `;
 }
 
@@ -567,11 +566,13 @@ function _renderReportModal(sub, report, t, profiles = []) {
           </div>
         </div>
         <div class="flex gap-2 mt-4 justify-between">
-          <div class="form-group" style="max-width:120px">
-            <label class="form-label">${t('teacher.overrideGrade')}</label>
-            <input type="number" class="input font-mono" min="0" max="100" value="${report?.final_grade ?? ''}" id="override-grade" data-sub-id="${sub.id}">
-          </div>
-          <button class="btn btn-primary btn-sm" id="save-override-btn" data-sub-id="${sub.id}">${t('common.save')}</button>
+          ${report ? `
+            <div class="form-group" style="max-width:120px">
+              <label class="form-label">${t('teacher.overrideGrade')}</label>
+              <input type="number" class="input font-mono" min="0" max="100" value="${report.final_grade ?? ''}" id="override-grade" data-sub-id="${sub.id}">
+            </div>
+            <button class="btn btn-primary btn-sm" id="save-override-btn" data-sub-id="${sub.id}">${t('common.save')}</button>
+          ` : ''}
         </div>
       </div>
     </div>
@@ -1028,10 +1029,10 @@ function _attachModalEvents(classes = []) {
   });
 }
 
-async function _rerender() {
+function _rerender() {
   const app = document.getElementById('app');
   if (app) {
-    app.innerHTML = await render();
+    app.innerHTML = render();
     attachEvents();
     _renderCharts();
   }

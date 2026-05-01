@@ -37,7 +37,7 @@ async function renderView(state) {
     case 'teacher':
       // Fetch initial data before rendering
       await TeacherDashboard.refreshData();
-      app.innerHTML = await TeacherDashboard.render();
+      app.innerHTML = TeacherDashboard.render();
       TeacherDashboard.attachEvents();
       if (TeacherDashboard.afterMount) TeacherDashboard.afterMount();
       break;
