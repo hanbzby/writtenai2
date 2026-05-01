@@ -92,7 +92,14 @@ async function _renderContent(t, tasks) {
 
 async function _renderClasses(t) {
   const user = Store.getState('currentUser');
-  const { data: classes = [] } = await DB.query('classes', { eq: ['teacher_id', user?.id] });
+  
+  // Kullanıcı bilgisi henüz sisteme oturmadıysa bir yükleme ekranı göster
+  if (!user || !user.id) {
+    return `<div class="empty-state"><div class="processing-spinner"></div><div class="mt-2">Yükleniyor...</div></div>`;
+  }
+
+  // Kullanıcı hazırsa sadece o öğretmene ait sınıfları getir
+  const { data: classes = [] } = await DB.query('classes', { eq: ['teacher_id', user.id] });
   return `
     <div class="page-header">
       <div><h1 class="page-title">${t('class.title')}</h1><p class="page-subtitle">${t('app.subtitle')}</p></div>
