@@ -101,9 +101,9 @@ const SubmissionService = {
     };
 
     if (existing) {
-      await client.from('submissions').update(payload).eq('id', existing.id);
+      await DB.query('submissions', { update: payload, eq: ['id', existing.id] });
     } else {
-      await client.from('submissions').insert([{ ...payload, id: DB.generateUUID(), status: 'DRAFT', submitted_at: now }]);
+      await DB.query('submissions', { insert: { ...payload, id: DB.generateUUID(), status: 'DRAFT', submitted_at: now } });
     }
     await _refreshStore(user.id);
   },
@@ -177,10 +177,10 @@ const SubmissionService = {
 
     let err;
     if (existing) {
-      const res = await client.from('submissions').update(payload).eq('id', existing.id);
+      const res = await DB.query('submissions', { update: payload, eq: ['id', existing.id] });
       err = res.error;
     } else {
-      const res = await client.from('submissions').insert([{ ...payload, id: DB.generateUUID() }]);
+      const res = await DB.query('submissions', { insert: { ...payload, id: DB.generateUUID() } });
       err = res.error;
     }
 

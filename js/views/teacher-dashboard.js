@@ -738,21 +738,23 @@ function attachEvents() {
       e.preventDefault();
       if (!confirm(I18n.t('class.deleteConfirm'))) return;
       const classId = el.dataset.classId;
-      if (DB.isMock()) {
-        // Remove class + all related enrollments + tasks (cascade)
-        DB.mock.classes = DB.mock.classes.filter(c => c.id !== classId);
-        DB.mock.class_enrollments = DB.mock.class_enrollments.filter(ce => ce.class_id !== classId);
-        DB.mock.tasks = DB.mock.tasks.filter(tk => tk.class_id !== classId);
-      } else {
-        // In a real DB with CASCADE, deleting the class cascades enrollments/tasks.
-        // If not, delete manually:
+      
+      try {
+        // Mock veya Supabase fark etmeksizin DB.query kullanılır
+        // Bu sayede her işlem DATA_CHANGED eventini otomatik fırlatır
         await DB.query('class_enrollments', { del: true, eq: ['class_id', classId] });
         await DB.query('tasks', { del: true, eq: ['class_id', classId] });
-        await DB.query('classes', { del: true, eq: ['id', classId] });
+        const { error } = await DB.query('classes', { del: true, eq: ['id', classId] });
+        
+        if (error) throw error;
+        
+        Store.toast('success', I18n.t('class.delete') + ' ✓');
+        if (_activeClassId === classId) { _activeClassId = null; _saveNav(); }
+        // app.js dinleyicisi DATA_CHANGED ile arayüzü anında yeniler
+      } catch (err) {
+        console.error("Delete Class Error:", err);
+        Store.toast('error', "Sınıf silinemedi: " + (err.message || 'Bilinmeyen hata'));
       }
-      Store.toast('success', I18n.t('class.delete') + ' ✓');
-      if (_activeClassId === classId) { _activeClassId = null; _saveNav(); }
-      // DATA_CHANGED will be dispatched by DB.query → app.js → silent refresh
     });
   });
 

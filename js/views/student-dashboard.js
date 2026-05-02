@@ -491,18 +491,12 @@ function attachEvents() {
       const user = Store.getState('currentUser');
       if (!user) { Store.toast('error', 'Oturum hatası, lütfen tekrar giriş yapın.'); return; }
       try {
-        if (DB.isMock()) {
-          DB.mock.class_enrollments = DB.mock.class_enrollments.filter(
-            ce => !(ce.class_id === classId && ce.student_id === user.id)
-          );
-        } else {
-          const { error } = await DB.query('class_enrollments', { del: true, match: { class_id: classId, student_id: user.id } });
-          if (error) throw error;
-        }
-        if (_selectedClassId === classId) _selectedClassId = null;
+        const { error } = await DB.query('class_enrollments', { del: true, match: { class_id: classId, student_id: user.id } });
+        if (error) throw error;
+        
+        if (_selectedClassId === classId) { _selectedClassId = null; _saveNav(); }
         Store.toast('success', 'Sınıftan ayrıldınız.');
-        await refreshData();
-        _rerender();
+        // DATA_CHANGED will trigger silent refresh automatically
       } catch (err) {
         console.error('[LeaveClass]', err);
         Store.toast('error', 'Sınıftan ayrılırken hata oluştu.');
@@ -563,7 +557,7 @@ function attachEvents() {
         const result = await SubmissionService.submitFinal(taskId, cleaned);
         if (result) {
           Store.toast('success', I18n.t('student.submitted') + ' ✓');
-          _rerender();
+          // DATA_CHANGED triggers app.js silent refresh, so no explicit _rerender() needed here.
         }
       } catch (err) {
         console.error('[Submit]', err);
