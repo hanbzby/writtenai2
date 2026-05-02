@@ -7,9 +7,24 @@ import DB from '../supabase-client.js';
 import DeadlineEngine from '../services/deadline-engine.js';
 import QueueHandler from '../services/queue-handler.js';
 
-let _activeTab = 'tasks';
+const NAV_KEY = 'sf_teacher_nav';
+
+function _loadNav() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(NAV_KEY) || '{}');
+    return saved;
+  } catch { return {}; }
+}
+function _saveNav() {
+  try {
+    sessionStorage.setItem(NAV_KEY, JSON.stringify({ tab: _activeTab, classId: _activeClassId }));
+  } catch {}
+}
+
+const _nav = _loadNav();
+let _activeTab = _nav.tab || 'tasks';
 let _selectedTask = null;
-let _activeClassId = null;
+let _activeClassId = _nav.classId || null;
 let _realtimeChannel = null;
 
 function render() {
@@ -605,6 +620,7 @@ function attachEvents() {
   document.querySelectorAll('.sidebar-link[data-tab]').forEach(el => {
     el.addEventListener('click', () => {
       _activeTab = el.dataset.tab;
+      _saveNav();
       _rerender();
     });
   });
@@ -658,6 +674,7 @@ function attachEvents() {
   document.querySelectorAll('.sidebar-link[data-tab]').forEach(el => {
     el.addEventListener('click', () => {
       _activeTab = el.dataset.tab;
+      _saveNav();
       closeSidebar();
       _rerender();
     });
@@ -722,11 +739,19 @@ function attachEvents() {
   document.querySelectorAll('.delete-class-btn').forEach(el => {
     el.addEventListener('click', async (e) => {
       e.stopPropagation();
+      e.preventDefault();
       if (!confirm(I18n.t('class.deleteConfirm'))) return;
       const classId = el.dataset.classId;
       if (DB.isMock()) {
+        // Remove class + all related enrollments + tasks (cascade)
         DB.mock.classes = DB.mock.classes.filter(c => c.id !== classId);
+        DB.mock.class_enrollments = DB.mock.class_enrollments.filter(ce => ce.class_id !== classId);
+        DB.mock.tasks = DB.mock.tasks.filter(tk => tk.class_id !== classId);
       } else {
+        // In a real DB with CASCADE, deleting the class cascades enrollments/tasks.
+        // If not, delete manually:
+        await DB.query('class_enrollments', { del: true, eq: ['class_id', classId] });
+        await DB.query('tasks', { del: true, eq: ['class_id', classId] });
         await DB.query('classes', { del: true, eq: ['id', classId] });
       }
       Store.toast('success', I18n.t('class.delete') + ' ✓');
@@ -740,6 +765,7 @@ function attachEvents() {
     el.addEventListener('click', () => {
       _activeClassId = el.dataset.classId;
       _activeTab = 'tasks';
+      _saveNav();
       _rerender();
     });
   });
@@ -748,6 +774,7 @@ function attachEvents() {
   document.getElementById('back-to-classes')?.addEventListener('click', () => {
     _activeClassId = null;
     _activeTab = 'classes';
+    _saveNav();
     _rerender();
   });
 

@@ -9,14 +9,26 @@ import FileParser from '../utils/file-parser.js';
 import Sanitizer from '../utils/sanitizer.js';
 import SubmissionService from '../services/submission-service.js';
 
-let _activeTab = 'tasks';
+const NAV_KEY = 'sf_student_nav';
+
+function _loadNav() {
+  try { return JSON.parse(sessionStorage.getItem(NAV_KEY) || '{}'); }
+  catch { return {}; }
+}
+function _saveNav() {
+  try { sessionStorage.setItem(NAV_KEY, JSON.stringify({ tab: _activeTab, classId: _selectedClassId })); }
+  catch {}
+}
+
+const _nav = _loadNav();
+let _activeTab = _nav.tab || 'tasks';
 let _selectedTask = null;
+let _selectedClassId = _nav.classId || null;
 let _countdownInterval = null;
 
 function render() {
   const t = I18n.t.bind(I18n);
   const user = Store.getState('currentUser');
-  
   const tasks = Store.getState('tasks') || [];
   const myClasses = Store.getState('userClasses') || [];
 
@@ -29,6 +41,7 @@ function render() {
         ${_renderContent(t, user, tasks, myClasses)}
       </div>
     </div>
+    ${_renderMobileBottomNav(t)}
   `;
 }
 
@@ -37,7 +50,7 @@ async function refreshData() {
     const user = Store.getState('currentUser');
     if (!user) return;
 
-    let myClassIds = [], tasks = [], myClasses = [], subs = [], reports = [];
+    let myClassIds = [], tasks = [], myClasses = [], subs = [], reports = [], teacherProfiles = [];
 
     if (DB.isMock()) {
       myClassIds = DB.mock.class_enrollments.filter(ce => ce.student_id === user.id).map(ce => ce.class_id);
@@ -45,6 +58,9 @@ async function refreshData() {
       myClasses = myClassIds.map(id => DB.mock.classes.find(c => c.id === id)).filter(Boolean);
       subs = DB.mock.submissions.filter(s => s.student_id === user.id);
       reports = DB.mock.feedback_reports.filter(r => subs.some(s => s.id === r.submission_id));
+      // Fetch teacher profiles for all classes the student belongs to
+      const teacherIds = [...new Set(myClasses.map(c => c.teacher_id).filter(Boolean))];
+      teacherProfiles = DB.mock.profiles.filter(p => teacherIds.includes(p.id));
     } else {
       const { data: enrolls } = await DB.query('class_enrollments', { eq: ['student_id', user.id] });
       myClassIds = (enrolls || []).map(ce => ce.class_id);
@@ -61,6 +77,13 @@ async function refreshData() {
         myClasses = (clsRes.data || []).filter(c => myClassIds.includes(c.id));
         subs = subRes.data || [];
         reports = (repRes.data || []).filter(r => subs.some(s => s.id === r.submission_id));
+
+        // Fetch teacher profiles
+        const teacherIds = [...new Set(myClasses.map(c => c.teacher_id).filter(Boolean))];
+        if (teacherIds.length > 0) {
+          const { data: profData } = await DB.query('profiles');
+          teacherProfiles = (profData || []).filter(p => teacherIds.includes(p.id));
+        }
       }
     }
 
@@ -69,6 +92,7 @@ async function refreshData() {
     Store.dispatch('REFRESH_STUDENT_DATA', {
       tasks,
       userClasses: myClasses,
+      teacherProfiles,
       submissions: subs,
       feedbackReports: reports
     });
@@ -78,14 +102,35 @@ async function refreshData() {
 }
 
 function _renderMobileHeader(t) {
+  const myClasses = Store.getState('userClasses') || [];
+  const selectedClass = myClasses.find(c => c.id === _selectedClassId);
   return `
     <header class="mobile-header">
-      <div class="mobile-header-logo">🎓 ScholarFeedback</div>
       <div class="flex items-center gap-2">
-        <button class="btn btn-danger btn-sm mobile-logout-btn" title="${t('auth.logout')}">🚪</button>
+        ${_selectedClassId && _activeTab === 'tasks' ? `<button class="hamburger-btn" id="mobile-back-btn" style="font-size:20px">←</button>` : ''}
+        <div class="mobile-header-logo">🎓 ${selectedClass ? selectedClass.class_name : 'ScholarFeedback'}</div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button class="btn btn-ghost btn-sm" id="mobile-join-btn" title="Sınıf Katıl">🔑</button>
         <button class="hamburger-btn" id="student-hamburger">☰</button>
       </div>
     </header>
+  `;
+}
+
+function _renderMobileBottomNav(t) {
+  return `
+    <nav class="mobile-bottom-nav">
+      <button class="mobile-nav-btn ${_activeTab === 'tasks' ? 'active' : ''}" data-tab="tasks">
+        <span>📋</span><span>${t('student.myTasks')}</span>
+      </button>
+      <button class="mobile-nav-btn" id="mobile-join-bottom-btn">
+        <span>🔑</span><span>${t('class.join')}</span>
+      </button>
+      <button class="mobile-nav-btn ${_activeTab === 'feedback' ? 'active' : ''}" data-tab="feedback">
+        <span>💬</span><span>${t('student.myFeedback')}</span>
+      </button>
+    </nav>
   `;
 }
 
@@ -134,43 +179,87 @@ function _renderContent(t, user, tasks, myClasses) {
   return '';
 }
 
-function _renderTasks(t, user, tasks, myClasses) {
+function _renderClassPicker(t, myClasses) {
+  const teachers = Store.getState('teacherProfiles') || [];
+  const allTasks = Store.getState('tasks') || [];
+  if (myClasses.length === 0) return `
+    <div class="page-header"><div><h1 class="page-title">${t('student.myTasks')}</h1></div></div>
+    <div id="join-class-modal-area"></div>
+    <div class="empty-state">
+      <div class="empty-state-icon">🏫</div>
+      <div class="empty-state-text" style="margin-bottom:16px">${t('class.noClasses') || 'Henüz bir sınıfa kayıtlı değilsiniz.'}</div>
+      <button class="btn btn-primary" id="join-class-empty-btn">🔑 ${t('class.join')}</button>
+    </div>
+  `;
   return `
     <div class="page-header">
-      <div><h1 class="page-title">${t('student.myTasks')}</h1><p class="page-subtitle">${t('app.subtitle')}</p></div>
+      <div><h1 class="page-title">${t('student.myTasks')}</h1><p class="page-subtitle">${t('class.selectClass') || 'Ödevleri görmek için bir sınıf seçin'}</p></div>
+      <button class="btn btn-secondary btn-sm" id="join-class-header-btn">🔑 ${t('class.join')}</button>
     </div>
-    ${myClasses.length > 0 ? `
-      <div class="mb-6">
-        <div class="text-xs text-muted mb-2">${t('class.myClasses')}</div>
-        <div class="flex gap-2" style="flex-wrap:wrap">
-          ${myClasses.map(c => `
-            <span class="badge badge-info" style="display:inline-flex; align-items:center; gap:4px;">
-              🏫 ${c.class_name}
-              <button class="btn btn-ghost btn-sm leave-class-btn" data-class-id="${c.id}" style="padding:0; height:auto; min-height:auto; margin-left:4px;" title="Sınıftan Ayrıl">✖</button>
-            </span>
-          `).join('')}
+    <div id="join-class-modal-area"></div>
+    <div class="class-grid">
+      ${myClasses.map(cls => {
+        const teacher = teachers.find(p => p.id === cls.teacher_id);
+        const taskCount = allTasks.filter(tk => tk.class_id === cls.id).length;
+        return `
+          <div class="class-card student-class-card" data-class-id="${cls.id}">
+            <div class="class-card-header">
+              <div class="class-card-name">🏫 ${cls.class_name}</div>
+              <span class="badge badge-info">${taskCount} ${t('student.myTasks') || 'ödev'}</span>
+            </div>
+            ${teacher ? `<div class="text-sm text-muted" style="margin-bottom:8px">👤 ${teacher.full_name}</div>` : ''}
+            <div class="class-card-meta">
+              <span>📅 ${new Date(cls.created_at).toLocaleDateString()}</span>
+            </div>
+            <div class="flex gap-2 mt-3">
+              <button class="btn btn-primary btn-sm" style="flex:1" data-class-id="${cls.id}">Ödevlere Bak →</button>
+              <button class="btn btn-ghost btn-sm leave-class-btn" data-class-id="${cls.id}" title="Sınıftan Ayrıl">✖</button>
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function _renderTasks(t, user, tasks, myClasses) {
+  // Step 1: No class selected → show class picker
+  if (!_selectedClassId) return _renderClassPicker(t, myClasses);
+
+  // Step 2: Class selected → show that class's tasks
+  const currentClass = myClasses.find(c => c.id === _selectedClassId);
+  const teachers = Store.getState('teacherProfiles') || [];
+  const teacher = teachers.find(p => p.id === currentClass?.teacher_id);
+  const filteredTasks = tasks.filter(tk => tk.class_id === _selectedClassId);
+
+  return `
+    <div class="page-header">
+      <div style="display:flex;align-items:center;gap:12px">
+        <button class="btn btn-ghost btn-sm" id="back-to-classes" style="font-size:18px">← </button>
+        <div>
+          <h1 class="page-title">${currentClass?.class_name || ''}</h1>
+          ${teacher ? `<p class="page-subtitle">👤 ${teacher.full_name}</p>` : ''}
         </div>
       </div>
-    ` : ''}
+      <button class="btn btn-secondary btn-sm" id="join-class-header-btn">🔑 ${t('class.join')}</button>
+    </div>
     <div id="join-class-modal-area"></div>
-    ${tasks.length === 0 ? `
+    ${filteredTasks.length === 0 ? `
       <div class="empty-state">
         <div class="empty-state-icon">📋</div>
         <div class="empty-state-text">${t('common.noData')}</div>
       </div>
     ` : `
       <div class="flex flex-col gap-4">
-        ${tasks.map(task => {
+        ${filteredTasks.map(task => {
           const storeSubs = Store.getState('submissions') || [];
-          const sub = storeSubs.find(s => s.task_id === task.id && s.student_id === user?.id) || 
+          const sub = storeSubs.find(s => s.task_id === task.id && s.student_id === user?.id) ||
                       (DB.isMock() ? DB.mock.submissions.find(s => s.task_id === task.id && s.student_id === user?.id) : null);
           const isSubmitted = sub && (sub.status === 'SUBMITTED' || sub.status === 'GRADED' || sub.status === 'PUBLISHED');
           const isDraft = sub && sub.status === 'DRAFT';
-          
           const deadline = DeadlineEngine.getRemaining(task.deadline_datetime);
           const urgency = DeadlineEngine.getUrgency(task.deadline_datetime);
           const canSubmit = DeadlineEngine.canSubmit(task.deadline_datetime);
-
           return `
             <div class="task-card" data-task-id="${task.id}">
               <div class="task-card-header">
@@ -243,10 +332,22 @@ function _renderFeedback(t, user, tasks) {
         const report = reports.find(r => r.submission_id === sub.id);
         const isPublished = task?.is_published;
 
+        // Class & teacher meta for feedback view
+        const allClasses = Store.getState('userClasses') || [];
+        const feedbackClass = allClasses.find(c => c.id === task?.class_id);
+        const feedbackTeachers = Store.getState('teacherProfiles') || [];
+        const feedbackTeacher = feedbackTeachers.find(p => p.id === feedbackClass?.teacher_id);
+
         if (!isPublished) {
           return `
             <div class="card">
               <h3>${task?.title || 'Task'}</h3>
+              ${feedbackClass || feedbackTeacher ? `
+                <div class="flex gap-2 mt-1 mb-2" style="flex-wrap:wrap">
+                  ${feedbackClass ? `<span class="badge badge-info" style="font-size:0.7rem">🏫 ${feedbackClass.class_name}</span>` : ''}
+                  ${feedbackTeacher ? `<span class="badge badge-neutral" style="font-size:0.7rem">👤 ${feedbackTeacher.full_name}</span>` : ''}
+                </div>
+              ` : ''}
               <p class="mt-2 text-muted">${t('feedback.notPublished')}</p>
               <span class="badge badge-neutral mt-2">${t('status.' + sub.status)}</span>
             </div>
@@ -255,10 +356,16 @@ function _renderFeedback(t, user, tasks) {
 
         return `
           <div class="card">
-            <div class="flex justify-between items-center mb-4">
+            <div class="flex justify-between items-center mb-2">
               <h3>${task?.title || 'Task'}</h3>
               <span class="badge badge-success">${t('status.PUBLISHED')}</span>
             </div>
+            ${feedbackClass || feedbackTeacher ? `
+              <div class="flex gap-2 mb-4" style="flex-wrap:wrap">
+                ${feedbackClass ? `<span class="badge badge-info" style="font-size:0.7rem">🏫 ${feedbackClass.class_name}</span>` : ''}
+                ${feedbackTeacher ? `<span class="badge badge-neutral" style="font-size:0.7rem">👤 ${feedbackTeacher.full_name}</span>` : ''}
+              </div>
+            ` : ''}
             ${report ? `
               <div class="flex gap-4 mb-4" style="flex-wrap:wrap">
                 <div class="score-gauge">
@@ -292,30 +399,50 @@ function _renderFeedback(t, user, tasks) {
 }
 
 function attachEvents() {
-  // Leave class
-  document.querySelectorAll('.leave-class-btn').forEach(el => {
-    el.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const classId = el.dataset.classId;
-      if (!confirm(I18n.t('class.leaveConfirm'))) return;
-      
-      const user = Store.getState('currentUser');
-      if (DB.isMock()) {
-        DB.mock.class_enrollments = DB.mock.class_enrollments.filter(ce => !(ce.student_id === user.id && ce.class_id === classId));
-      } else {
-        await DB.query('class_enrollments', { del: true, match: { student_id: user.id, class_id: classId } });
-      }
-      Store.toast('success', I18n.t('class.leave') + ' ✓');
-      refreshData().then(() => _rerender());
+  const t = I18n.t.bind(I18n);
+
+  // Tab navigation (sidebar + mobile bottom nav)
+  document.querySelectorAll('.sidebar-link[data-tab], .mobile-nav-btn[data-tab]').forEach(el => {
+    el.addEventListener('click', () => {
+      _activeTab = el.dataset.tab;
+      if (_activeTab === 'feedback') _selectedClassId = null;
+      _saveNav();
+      document.getElementById('student-sidebar')?.classList.remove('open');
+      document.getElementById('student-sidebar-overlay')?.classList.remove('active');
+      _rerender();
     });
   });
 
-  // Tab navigation
-  document.querySelectorAll('.sidebar-link[data-tab]').forEach(el => {
-    el.addEventListener('click', () => {
-      _activeTab = el.dataset.tab;
+  // Class picker cards — click on card body to select, but not on action buttons
+  document.querySelectorAll('.student-class-card').forEach(el => {
+    el.addEventListener('click', (e) => {
+      // Ignore clicks on buttons inside the card (leave, primary btn)
+      if (e.target.closest('button')) return;
+      _selectedClassId = el.dataset.classId;
+      _saveNav();
       _rerender();
     });
+  });
+  // "Ödevlere Bak" button inside class card
+  document.querySelectorAll('.student-class-card .btn-primary[data-class-id]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _selectedClassId = el.dataset.classId;
+      _saveNav();
+      _rerender();
+    });
+  });
+
+  // Back to class list
+  document.getElementById('back-to-classes')?.addEventListener('click', () => {
+    _selectedClassId = null;
+    _saveNav();
+    _rerender();
+  });
+  document.getElementById('mobile-back-btn')?.addEventListener('click', () => {
+    _selectedClassId = null;
+    _saveNav();
+    _rerender();
   });
 
   // Language toggle
@@ -338,43 +465,44 @@ function attachEvents() {
   // Hamburger Menu Toggle
   const sidebar = document.getElementById('student-sidebar');
   const overlay = document.getElementById('student-sidebar-overlay');
-  
-  const closeSidebar = () => {
-    sidebar?.classList.remove('open');
-    overlay?.classList.remove('active');
-  };
-
+  const closeSidebar = () => { sidebar?.classList.remove('open'); overlay?.classList.remove('active'); };
   document.getElementById('student-hamburger')?.addEventListener('click', () => {
-    sidebar?.classList.add('open');
-    overlay?.classList.add('active');
+    sidebar?.classList.add('open'); overlay?.classList.add('active');
   });
-  
   overlay?.addEventListener('click', closeSidebar);
-  // Auto-close sidebar on link click in mobile
-  document.querySelectorAll('.sidebar-link[data-tab]').forEach(el => {
-    el.addEventListener('click', () => {
-      _activeTab = el.dataset.tab;
-      closeSidebar();
-      _rerender();
-    });
+
+  // Join modal triggers
+  ['join-class-sidebar-btn','join-class-header-btn','mobile-join-btn','mobile-join-bottom-btn','join-class-empty-btn'].forEach(id => {
+    document.getElementById(id)?.addEventListener('click', _showJoinModal);
   });
-  document.getElementById('join-class-sidebar-btn')?.addEventListener('click', _showJoinModal);
-  document.getElementById('join-class-header-btn')?.addEventListener('click', _showJoinModal);
 
   // Leave class
   document.querySelectorAll('.leave-class-btn').forEach(el => {
     el.addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (!confirm('Bu sınıftan ayrılmak istediğinize emin misiniz? Sınıftaki görevler silinmeyecektir ancak sınıf sayfanızdan kaybolacaktır.')) return;
+      e.preventDefault();
       const classId = el.dataset.classId;
+      if (!classId) return;
+      if (!confirm('Bu sınıftan ayrılmak istediğinize emin misiniz?')) return;
       const user = Store.getState('currentUser');
-      if (DB.isMock()) {
-        DB.mock.class_enrollments = DB.mock.class_enrollments.filter(ce => !(ce.class_id === classId && ce.student_id === user?.id));
-      } else {
-        await DB.query('class_enrollments', { del: true, match: { class_id: classId, student_id: user?.id } });
+      if (!user) { Store.toast('error', 'Oturum hatası, lütfen tekrar giriş yapın.'); return; }
+      try {
+        if (DB.isMock()) {
+          DB.mock.class_enrollments = DB.mock.class_enrollments.filter(
+            ce => !(ce.class_id === classId && ce.student_id === user.id)
+          );
+        } else {
+          const { error } = await DB.query('class_enrollments', { del: true, match: { class_id: classId, student_id: user.id } });
+          if (error) throw error;
+        }
+        if (_selectedClassId === classId) _selectedClassId = null;
+        Store.toast('success', 'Sınıftan ayrıldınız.');
+        await refreshData();
+        _rerender();
+      } catch (err) {
+        console.error('[LeaveClass]', err);
+        Store.toast('error', 'Sınıftan ayrılırken hata oluştu.');
       }
-      Store.toast('success', 'Sınıftan ayrıldınız.');
-      _rerender();
     });
   });
 
