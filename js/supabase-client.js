@@ -146,11 +146,15 @@ async function query(table, { select, match, eq, upsert, insert, update, del, or
       return res;
     }
     if (del) {
-      let q = _supabase.from(table).delete();
+      let q = _supabase.from(table).delete().select();
       if (eq) q = q.eq(eq[0], eq[1]);
       if (match) Object.entries(match).forEach(([k, v]) => { q = q.eq(k, v); });
       const res = await q;
-      if (!res.error) _notifyChange(table, 'DELETE', null);
+      if (res.error) return res;
+      // Eğer silinen bir satır varsa notify et
+      if (res.data && res.data.length > 0) {
+        _notifyChange(table, 'DELETE', null);
+      }
       return res;
     }
     let q = _supabase.from(table).select(select || '*');

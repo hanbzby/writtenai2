@@ -744,9 +744,13 @@ function attachEvents() {
         // Bu sayede her işlem DATA_CHANGED eventini otomatik fırlatır
         await DB.query('class_enrollments', { del: true, eq: ['class_id', classId] });
         await DB.query('tasks', { del: true, eq: ['class_id', classId] });
-        const { error } = await DB.query('classes', { del: true, eq: ['id', classId] });
         
-        if (error) throw error;
+        const res = await DB.query('classes', { del: true, eq: ['id', classId] });
+        
+        if (res.error) throw res.error;
+        if (!DB.isMock() && res.data && res.data.length === 0) {
+          throw new Error("Veritabanı güvenliği (RLS) bu sınıfı silmenizi engelledi veya sınıf bulunamadı.");
+        }
         
         Store.toast('success', I18n.t('class.delete') + ' ✓');
         if (_activeClassId === classId) { _activeClassId = null; _saveNav(); }

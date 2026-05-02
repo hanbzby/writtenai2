@@ -491,8 +491,11 @@ function attachEvents() {
       const user = Store.getState('currentUser');
       if (!user) { Store.toast('error', 'Oturum hatası, lütfen tekrar giriş yapın.'); return; }
       try {
-        const { error } = await DB.query('class_enrollments', { del: true, match: { class_id: classId, student_id: user.id } });
-        if (error) throw error;
+        const res = await DB.query('class_enrollments', { del: true, match: { class_id: classId, student_id: user.id } });
+        if (res.error) throw res.error;
+        if (!DB.isMock() && res.data && res.data.length === 0) {
+          throw new Error("Bu sınıftan zaten ayrılmışsınız veya işlem engellendi (RLS).");
+        }
         
         if (_selectedClassId === classId) { _selectedClassId = null; _saveNav(); }
         Store.toast('success', 'Sınıftan ayrıldınız.');
