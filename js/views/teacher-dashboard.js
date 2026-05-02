@@ -715,14 +715,10 @@ function attachEvents() {
 
       try {
         const { data, error } = await DB.query('classes', { insert: cls });
-        
         if (error) throw error;
-
-        // Başarılı kayıttan sonra veriyi tekrar çekmek için kısa bir bekleme
         Store.toast('success', I18n.t('class.create') + ' ✓');
         area.innerHTML = '';
-        setTimeout(() => _rerender(), 500); 
-
+        // DATA_CHANGED from DB.query → app.js → silent refresh (no manual rerender needed)
       } catch (err) {
         console.error("DB Error:", err);
         Store.toast('error', "Hata: " + (err.message || "Sınıf kaydedilemedi. Supabase RLS ayarlarını kontrol et!"));
@@ -755,8 +751,8 @@ function attachEvents() {
         await DB.query('classes', { del: true, eq: ['id', classId] });
       }
       Store.toast('success', I18n.t('class.delete') + ' ✓');
-      if (_activeClassId === classId) _activeClassId = null;
-      refreshData().then(() => _rerender());
+      if (_activeClassId === classId) { _activeClassId = null; _saveNav(); }
+      // DATA_CHANGED will be dispatched by DB.query → app.js → silent refresh
     });
   });
 
@@ -1068,9 +1064,9 @@ function _rerender() {
 let _rerenderTimeout = null;
 function _debouncedRerender() {
   if (_rerenderTimeout) clearTimeout(_rerenderTimeout);
-  _rerenderTimeout = setTimeout(() => {
-    refreshData().then(() => _rerender());
-  }, 500);
+  // DATA_CHANGED from DB.query already triggers app.js silent refresh.
+  // This is kept as a local fallback for cases where no DB query fires.
+  _rerenderTimeout = setTimeout(() => _rerender(), 500);
 }
 
 function _renderCharts() {

@@ -128,22 +128,30 @@ const mock = {
 async function query(table, { select, match, eq, upsert, insert, update, del, order } = {}) {
   if (!_mockMode && _supabase) {
     if (insert) {
-      return await _supabase.from(table).insert(insert).select();
+      const res = await _supabase.from(table).insert(insert).select();
+      if (!res.error) _notifyChange(table, 'INSERT', res.data?.[0]);
+      return res;
     }
     if (upsert) {
-      return await _supabase.from(table).upsert(upsert).select();
+      const res = await _supabase.from(table).upsert(upsert).select();
+      if (!res.error) _notifyChange(table, 'UPSERT', res.data?.[0]);
+      return res;
     }
     if (update) {
       let q = _supabase.from(table).update(update);
       if (eq) q = q.eq(eq[0], eq[1]);
       if (match) Object.entries(match).forEach(([k, v]) => { q = q.eq(k, v); });
-      return await q.select();
+      const res = await q.select();
+      if (!res.error) _notifyChange(table, 'UPDATE', res.data?.[0]);
+      return res;
     }
     if (del) {
       let q = _supabase.from(table).delete();
       if (eq) q = q.eq(eq[0], eq[1]);
       if (match) Object.entries(match).forEach(([k, v]) => { q = q.eq(k, v); });
-      return await q;
+      const res = await q;
+      if (!res.error) _notifyChange(table, 'DELETE', null);
+      return res;
     }
     let q = _supabase.from(table).select(select || '*');
     if (eq) q = q.eq(eq[0], eq[1]);
@@ -159,40 +167,81 @@ async function query(table, { select, match, eq, upsert, insert, update, del, or
     return await q;
   }
   // Mock mode
-  await new Promise(r => setTimeout(r, 100 + Math.random() * 150));
-  let data = mock[table] || [];
+  await new Promise(r => setTimeout(r, 80 + Math.random() * 80));
+  let data = mock[table] ? [...mock[table]] : [];
   if (eq) data = data.filter(r => r[eq[0]] === eq[1]);
   if (match) data = data.filter(r => Object.entries(match).every(([k, v]) => r[k] === v));
-  
+
   const saveMock = () => {
     try { localStorage.setItem('scholarfeedback_mock_db', JSON.stringify(mock)); } catch (e) {}
   };
+  const changed = (type, record) => { saveMock(); _notifyChange(table, type, record); };
 
   if (upsert) {
-    const existing = data.findIndex(r => upsert._matchKeys?.every(k => r[k] === upsert[k]));
-    if (existing >= 0) { Object.assign(mock[table][existing], upsert); saveMock(); return { data: [mock[table][existing]], error: null }; }
+    const existing = (mock[table] || []).findIndex(r => upsert._matchKeys?.every(k => r[k] === upsert[k]));
+    if (existing >= 0) { Object.assign(mock[table][existing], upsert); changed('UPDATE', mock[table][existing]); return { data: [mock[table][existing]], error: null }; }
+    if (!mock[table]) mock[table] = [];
     mock[table].push(upsert);
-    saveMock();
+    changed('INSERT', upsert);
     return { data: [upsert], error: null };
   }
-  if (insert) { mock[table].push(insert); saveMock(); return { data: [insert], error: null }; }
+  if (insert) {
+    if (!mock[table]) mock[table] = [];
+    mock[table].push(insert);
+    changed('INSERT', insert);
+    return { data: [insert], error: null };
+  }
   if (update && eq) {
-    const idx = mock[table].findIndex(r => r[eq[0]] === eq[1]);
-    if (idx >= 0) { Object.assign(mock[table][idx], update); saveMock(); return { data: [mock[table][idx]], error: null }; }
+    const idx = (mock[table] || []).findIndex(r => r[eq[0]] === eq[1]);
+    if (idx >= 0) { Object.assign(mock[table][idx], update); changed('UPDATE', mock[table][idx]); return { data: [mock[table][idx]], error: null }; }
   }
   if (del && eq) {
-    const before = mock[table].length;
-    mock[table] = mock[table].filter(r => r[eq[0]] !== eq[1]);
-    if (mock[table].length !== before) { saveMock(); return { data: null, error: null }; }
+    const before = (mock[table] || []).length;
+    mock[table] = (mock[table] || []).filter(r => r[eq[0]] !== eq[1]);
+    if (mock[table].length !== before) { changed('DELETE', null); return { data: null, error: null }; }
   }
   if (del && match) {
-    const before = mock[table].length;
-    mock[table] = mock[table].filter(r => !Object.entries(match).every(([k, v]) => r[k] === v));
-    if (mock[table].length !== before) { saveMock(); return { data: null, error: null }; }
+    const before = (mock[table] || []).length;
+    mock[table] = (mock[table] || []).filter(r => !Object.entries(match).every(([k, v]) => r[k] === v));
+    if (mock[table].length !== before) { changed('DELETE', null); return { data: null, error: null }; }
   }
   return { data, error: null };
 }
 
-const DB = { init, isMock, client, query, mock, generateJoinCode, generateUUID };
+/** Dispatch DATA_CHANGED with context after any write */
+function _notifyChange(table, type, record) {
+  Store.dispatch(Store.Events.DATA_CHANGED, { _lastChange: { table, type, record, ts: Date.now() } });
+}
+
+/** Supabase Realtime: subscribe to key tables for live updates */
+let _realtimeChannels = [];
+function subscribeRealtime(onUpdate) {
+  if (_mockMode || !_supabase) return;
+  // Unsubscribe existing channels first
+  _realtimeChannels.forEach(ch => ch.unsubscribe());
+  _realtimeChannels = [];
+
+  const tables = ['classes', 'class_enrollments', 'tasks', 'submissions', 'feedback_reports'];
+  tables.forEach(table => {
+    const ch = _supabase
+      .channel(`rt_${table}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table }, (payload) => {
+        Store.dispatch(Store.Events.REALTIME_UPDATE, {
+          _lastChange: { table, type: payload.eventType, record: payload.new || payload.old, ts: Date.now() }
+        });
+        if (typeof onUpdate === 'function') onUpdate(table, payload);
+      })
+      .subscribe();
+    _realtimeChannels.push(ch);
+  });
+  console.log('[DB] Supabase Realtime subscribed to:', tables.join(', '));
+}
+
+function unsubscribeRealtime() {
+  _realtimeChannels.forEach(ch => ch.unsubscribe());
+  _realtimeChannels = [];
+}
+
+const DB = { init, isMock, client, query, mock, generateJoinCode, generateUUID, subscribeRealtime, unsubscribeRealtime };
 init(); // Auto-initialize on import
 export default DB;

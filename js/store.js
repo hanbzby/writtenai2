@@ -21,9 +21,10 @@ const Store = (() => {
     isLoading: false,
     toasts: [],               // { id, type, message, duration }
     profiles: [],             // Cached profiles for dashboard use
-    // ── Stage 3: Class Management ──
+    // ── Class Management ──
     userClasses: [],          // classes the user owns (teacher) or is enrolled in (student)
-    activeClass: null,        // currently selected class { id, class_name, join_code, ... }
+    activeClass: null,        // currently selected class
+    teacherProfiles: [],      // cached teacher profiles for student view
   };
 
   // ── Subscribers (Pub/Sub) ──
@@ -31,37 +32,42 @@ const Store = (() => {
 
   /**
    * Subscribe to a state event.
-   * @param {string} event - Event name (e.g., 'AUTH_CHANGED')
-   * @param {Function} callback - fn(newState)
+   * @param {string} event - Event name or '*' for all events
+   * @param {Function} callback - fn(newState) or fn(event, newState) for '*'
    * @returns {Function} unsubscribe function
    */
   function subscribe(event, callback) {
     if (!_listeners[event]) _listeners[event] = [];
     _listeners[event].push(callback);
     return () => {
-      _listeners[event] = _listeners[event].filter(cb => cb !== callback);
+      _listeners[event] = (_listeners[event] || []).filter(cb => cb !== callback);
     };
   }
 
   /**
    * Dispatch a state change event.
    * @param {string} event - Event name
-   * @param {Object} payload - Partial state update
+   * @param {*} payload - Partial state update (object) or scalar (boolean etc.)
    */
   function dispatch(event, payload) {
-    // Merge payload into state
-    if (payload && typeof payload === 'object') {
+    // Merge object payloads into state
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
       Object.assign(_state, payload);
+    } else if (payload !== undefined && typeof payload !== 'object') {
+      // Handle scalar dispatches like LOADING: true
+      if (event === Events.LOADING) _state.isLoading = payload;
     }
-    // Notify subscribers
-    const callbacks = _listeners[event] || [];
-    callbacks.forEach(cb => {
-      try { cb({ ..._state }); }
+
+    // Notify specific event subscribers
+    const snapshot = { ..._state };
+    (_listeners[event] || []).forEach(cb => {
+      try { cb(snapshot); }
       catch (e) { console.error(`[Store] Subscriber error on ${event}:`, e); }
     });
-    // Also notify wildcard listeners
+
+    // Notify wildcard listeners
     (_listeners['*'] || []).forEach(cb => {
-      try { cb(event, { ..._state }); }
+      try { cb(event, snapshot); }
       catch (e) { console.error(`[Store] Wildcard subscriber error:`, e); }
     });
   }
@@ -85,11 +91,11 @@ const Store = (() => {
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     const t = { id, type, message, duration };
     _state.toasts = [..._state.toasts, t];
-    dispatch('TOAST', { toasts: _state.toasts });
+    dispatch(Events.TOAST, { toasts: _state.toasts });
     if (duration > 0) {
       setTimeout(() => {
         _state.toasts = _state.toasts.filter(x => x.id !== id);
-        dispatch('TOAST', { toasts: _state.toasts });
+        dispatch(Events.TOAST, { toasts: _state.toasts });
       }, duration);
     }
     return id;
@@ -97,22 +103,26 @@ const Store = (() => {
 
   // ── Event Constants ──
   const Events = Object.freeze({
-    AUTH_CHANGED: 'AUTH_CHANGED',
-    LANGUAGE_CHANGED: 'LANGUAGE_CHANGED',
-    VIEW_CHANGED: 'VIEW_CHANGED',
-    TASKS_LOADED: 'TASKS_LOADED',
-    TASK_SELECTED: 'TASK_SELECTED',
-    SUBMISSIONS_LOADED: 'SUBMISSIONS_LOADED',
-    SUBMISSION_UPDATED: 'SUBMISSION_UPDATED',
-    FEEDBACK_READY: 'FEEDBACK_READY',
-    PROCESSING_PROGRESS: 'PROCESSING_PROGRESS',
-    PROCESSING_COMPLETE: 'PROCESSING_COMPLETE',
-    TOAST: 'TOAST',
-    LOADING: 'LOADING',
-    // Stage 3
-    CLASSES_LOADED: 'CLASSES_LOADED',
-    CLASS_CHANGED: 'CLASS_CHANGED',
-    PROFILES_LOADED: 'PROFILES_LOADED',
+    AUTH_CHANGED:          'AUTH_CHANGED',
+    LANGUAGE_CHANGED:      'LANGUAGE_CHANGED',
+    VIEW_CHANGED:          'VIEW_CHANGED',
+    TASKS_LOADED:          'TASKS_LOADED',
+    TASK_SELECTED:         'TASK_SELECTED',
+    SUBMISSIONS_LOADED:    'SUBMISSIONS_LOADED',
+    SUBMISSION_UPDATED:    'SUBMISSION_UPDATED',
+    FEEDBACK_READY:        'FEEDBACK_READY',
+    PROCESSING_PROGRESS:   'PROCESSING_PROGRESS',
+    PROCESSING_COMPLETE:   'PROCESSING_COMPLETE',
+    TOAST:                 'TOAST',
+    LOADING:               'LOADING',
+    // Class management
+    CLASSES_LOADED:        'CLASSES_LOADED',
+    CLASS_CHANGED:         'CLASS_CHANGED',
+    PROFILES_LOADED:       'PROFILES_LOADED',
+    // Reactive data refresh triggers
+    DATA_CHANGED:          'DATA_CHANGED',          // generic: any table mutated
+    REFRESH_STUDENT_DATA:  'REFRESH_STUDENT_DATA',  // student submissions/reports refreshed
+    REALTIME_UPDATE:       'REALTIME_UPDATE',        // Supabase realtime pushed a change
   });
 
   return Object.freeze({ subscribe, dispatch, getState, toast, Events });

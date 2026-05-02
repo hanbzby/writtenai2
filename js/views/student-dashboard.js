@@ -287,7 +287,7 @@ function _renderTasks(t, user, tasks, myClasses) {
                 </div>
               </div>
               ${canSubmit ? `
-                <div class="card mt-4" style="background:#f8fafc; border:1px solid var(--border);">
+                <div class="card mt-4" style="background:var(--accent-tint); border:1px solid var(--border-accent);">
                   <div class="flex justify-between items-center mb-3">
                     <h4>${isSubmitted ? '🔄 ' + t('student.resubmit') : '📝 ' + t('student.submitEssay')}</h4>
                     ${isSubmitted ? `<span class="text-xs text-muted">Son teslim: ${new Date(sub.updated_at || sub.submitted_at).toLocaleString()}</span>` : ''}
@@ -307,7 +307,7 @@ function _renderTasks(t, user, tasks, myClasses) {
                   </div>
                 </div>
               ` : `
-                <div class="card mt-4" style="background:rgba(220,38,38,0.04);border-color:rgba(220,38,38,0.15)">
+                <div class="card mt-4" style="background:var(--danger-glow);border-color:rgba(220,38,38,0.20)">
                   <div class="text-danger text-sm">🔒 ${t('student.deadlineLocked')}</div>
                   ${isSubmitted ? `<div class="text-xs text-muted mt-1">✅ Teslim edildi — ${new Date(sub.updated_at || sub.submitted_at).toLocaleString()}</div>` : ''}
                 </div>
