@@ -287,9 +287,12 @@ function _renderTasks(t, user, tasks, myClasses) {
                 </div>
               </div>
               ${canSubmit ? `
-                <div class="card mt-4" style="background:var(--bg-input)">
-                  <h4 class="mb-4">${isSubmitted ? t('student.resubmit') : t('student.submitEssay')}</h4>
-                  <div class="flex gap-3 mb-4">
+                <div class="card mt-4" style="background:#f8fafc; border:1px solid var(--border);">
+                  <div class="flex justify-between items-center mb-3">
+                    <h4>${isSubmitted ? '🔄 ' + t('student.resubmit') : '📝 ' + t('student.submitEssay')}</h4>
+                    ${isSubmitted ? `<span class="text-xs text-muted">Son teslim: ${new Date(sub.updated_at || sub.submitted_at).toLocaleString()}</span>` : ''}
+                  </div>
+                  <div class="flex gap-3 mb-3">
                     <label class="btn btn-secondary btn-sm" style="cursor:pointer">
                       📎 ${t('student.uploadFile')}
                       <input type="file" accept=".pdf,.docx,.doc,.txt" class="hidden file-upload" data-task-id="${task.id}">
@@ -299,13 +302,14 @@ function _renderTasks(t, user, tasks, myClasses) {
                     <textarea class="textarea essay-text" data-task-id="${task.id}" rows="8" placeholder="${t('student.writeEssay')}...">${sub?.content || ''}</textarea>
                   </div>
                   <div class="flex justify-between items-center mt-3">
-                    <span class="text-xs text-muted word-count" data-task-id="${task.id}">${sub ? sub.word_count + ' words' : '0 words'}</span>
+                    <span class="text-xs text-muted word-count" data-task-id="${task.id}">${sub ? (sub.word_count || 0) + ' kelime' : '0 kelime'}</span>
                     <button class="btn btn-primary submit-essay-btn" data-task-id="${task.id}">${t('common.submit')}</button>
                   </div>
                 </div>
               ` : `
-                <div class="card mt-4" style="background:rgba(239,68,68,0.05);border-color:rgba(239,68,68,0.2)">
+                <div class="card mt-4" style="background:rgba(220,38,38,0.04);border-color:rgba(220,38,38,0.15)">
                   <div class="text-danger text-sm">🔒 ${t('student.deadlineLocked')}</div>
+                  ${isSubmitted ? `<div class="text-xs text-muted mt-1">✅ Teslim edildi — ${new Date(sub.updated_at || sub.submitted_at).toLocaleString()}</div>` : ''}
                 </div>
               `}
             </div>
@@ -539,22 +543,34 @@ function attachEvents() {
 
   // Submit essay
   document.querySelectorAll('.submit-essay-btn').forEach(el => {
-    el.addEventListener('click', () => {
+    el.addEventListener('click', async () => {
       const taskId = el.dataset.taskId;
       const textarea = document.querySelector(`.essay-text[data-task-id="${taskId}"]`);
       const content = textarea?.value?.trim();
-      if (!content) { Store.toast('error', 'Essay content is required'); return; }
+      if (!content || content.length < 10) {
+        Store.toast('error', 'Lütfen ödevinizi yazın (en az 10 karakter).');
+        return;
+      }
 
       const { cleaned, warnings } = Sanitizer.sanitize(content);
       if (warnings.length > 0) console.warn('[Sanitizer]', warnings);
 
-      const user = Store.getState('currentUser');
-      const wordCount = cleaned.split(/\s+/).filter(Boolean).length;
+      // Disable button to prevent double-submit
+      el.disabled = true;
+      el.textContent = '⏳ Gönderiliyor...';
 
-      SubmissionService.submitFinal(taskId, cleaned).then(() => {
-        Store.toast('success', I18n.t('student.submitted') + ' ✓');
-        _rerender();
-      });
+      try {
+        const result = await SubmissionService.submitFinal(taskId, cleaned);
+        if (result) {
+          Store.toast('success', I18n.t('student.submitted') + ' ✓');
+          _rerender();
+        }
+      } catch (err) {
+        console.error('[Submit]', err);
+        Store.toast('error', 'Teslim edilemedi: ' + (err.message || 'Bilinmeyen hata'));
+        el.disabled = false;
+        el.textContent = I18n.t('common.submit');
+      }
     });
   });
 
