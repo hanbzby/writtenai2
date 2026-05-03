@@ -167,6 +167,11 @@ function _renderClasses(t) {
 
   if (!user || !user.id) return `<div class="p-6">Yükleniyor...</div>`;
 
+  if (_activeClassId && !classes.find(c => c.id === _activeClassId)) {
+    _activeClassId = null;
+    _saveNav();
+  }
+
   return `
     <div class="page-header">
       <div><h1 class="page-title">${t('class.title')}</h1><p class="page-subtitle">${t('app.subtitle')}</p></div>
@@ -211,6 +216,13 @@ function _renderTasks(t, tasks) {
   const profiles = Store.getState('profiles') || [];
   const enrollmentsList = Store.getState('enrollments') || [];
   const classes = Store.getState('userClasses') || [];
+
+  // Güvenlik: Eğer _activeClassId set edilmişse ama bu öğretmenin sınıflarında yoksa
+  // (Örn: Başka hesaptan çıkış yapıp girildiğinde sessionStorage'da kalmışsa) zorla null yap.
+  if (_activeClassId && !classes.find(c => c.id === _activeClassId)) {
+    _activeClassId = null;
+    _saveNav();
+  }
 
   if (_activeClassId) tasks = tasks.filter(tk => tk.class_id === _activeClassId);
   
