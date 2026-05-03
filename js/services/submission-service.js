@@ -125,7 +125,10 @@ const SubmissionService = {
       this.autoSaveDraft(taskId, content).then(() => {
         Store.toast('info', 'Taslak otomatik kaydedildi', 2000);
       });
-    },   /**
+    }, delay);
+  },
+
+  /**
    * Final submit. Pure UPSERT — no pre-flight SELECT needed.
    * PostgreSQL handles insert-vs-update via UNIQUE(task_id, student_id).
    * 15s timeout prevents hanging. Always returns true (success) or null (failure).
