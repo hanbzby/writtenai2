@@ -552,26 +552,26 @@ function attachEvents() {
       const { cleaned, warnings } = Sanitizer.sanitize(content);
       if (warnings.length > 0) console.warn('[Sanitizer]', warnings);
 
-      // Disable button to prevent double-submit
       el.disabled = true;
       el.textContent = '⏳ Gönderiliyor...';
+      let success = false;
 
       try {
         const result = await SubmissionService.submitFinal(taskId, cleaned);
         if (result) {
+          success = true;
           Store.toast('success', I18n.t('student.submitted') + ' ✓');
-          // _refreshStore inside submitFinal already dispatched REFRESH_STUDENT_DATA
-          // → app.js listener will call _rerenderStudent(). No extra re-render needed.
-        } else {
-          // submitFinal returned null (DB error shown via toast). Re-enable button.
-          el.disabled = false;
-          el.textContent = I18n.t('common.submit');
+          // REFRESH_STUDENT_DATA dispatched inside submitFinal → _rerenderStudent() via app.js
         }
       } catch (err) {
         console.error('[Submit]', err);
         Store.toast('error', 'Teslim edilemedi: ' + (err.message || 'Bilinmeyen hata'));
-        el.disabled = false;
-        el.textContent = I18n.t('common.submit');
+      } finally {
+        // Always re-enable button unless success triggered a re-render (el detached)
+        if (!success) {
+          el.disabled = false;
+          el.textContent = I18n.t('common.submit');
+        }
       }
     });
   });

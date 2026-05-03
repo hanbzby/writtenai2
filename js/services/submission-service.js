@@ -129,8 +129,8 @@ const SubmissionService = {
   },
 
   /**
-   * Final submit. Creates or updates the submission with status SUBMITTED.
-   * Always overwrites content so resubmit shows the latest version.
+   * Final submit. Uses UPSERT to atomically handle both new and existing submissions.
+   * Has 15s timeout, full console logging, and always returns true/null (never hangs).
    */
   async submitFinal(taskId, content) {
     const user = Store.getState('currentUser');
@@ -139,16 +139,13 @@ const SubmissionService = {
     const wordCount = content.split(/\s+/).filter(Boolean).length;
     const now = new Date().toISOString();
 
-    const existing = await _findExisting(taskId, user.id);
+    console.log('[Submit] Başlıyor…', { taskId, userId: user.id });
 
     if (DB.isMock()) {
+      const existing = DB.mock.submissions.find(s => s.task_id === taskId && s.student_id === user.id);
       const payload = {
-        content,
-        status: 'SUBMITTED',
-        word_count: wordCount,
-        language_detected: detectLanguage(content),
-        submitted_at: now,
-        updated_at: now
+        content, status: 'SUBMITTED', word_count: wordCount,
+        language_detected: detectLanguage(content), submitted_at: now, updated_at: now
       };
       if (existing) {
         await DB.query('submissions', { update: payload, eq: ['id', existing.id] });
@@ -159,7 +156,7 @@ const SubmissionService = {
       return true;
     }
 
-    // Supabase mode
+    // ── Supabase mode ──
     const client = DB.client() || window.supabaseClient;
     if (!client) { Store.toast('error', 'Veritabanı bağlantısı kurulamadı.'); return null; }
 
@@ -174,23 +171,40 @@ const SubmissionService = {
       updated_at: now
     };
 
-    let err;
-    if (existing) {
-      const res = await DB.query('submissions', { update: payload, eq: ['id', existing.id] });
-      err = res.error;
-      if (err) console.error('[SubmissionService] UPDATE error:', err.message, err.code, err.details);
-    } else {
-      const res = await DB.query('submissions', { insert: { ...payload, id: DB.generateUUID() } });
-      err = res.error;
-      if (err) console.error('[SubmissionService] INSERT error:', err.message, err.code, err.details);
-    }
+    // Find existing to supply the id for upsert
+    console.log('[Submit] Mevcut kayıt aranıyor…');
+    const existing = await _findExisting(taskId, user.id);
+    const record = existing ? { ...payload, id: existing.id } : { ...payload, id: DB.generateUUID() };
+    console.log('[Submit] Upsert yapılıyor…', { id: record.id, existing: !!existing });
 
-    if (err) {
-      Store.toast('error', 'Teslim edilemedi: ' + (err.message || 'Veritabı hatası — RLS politikasını kontrol edin.'));
+    try {
+      const upsertPromise = client
+        .from('submissions')
+        .upsert(record, { onConflict: 'task_id,student_id', ignoreDuplicates: false })
+        .select()
+        .single();
+
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Bağlantı 15s içinde tamamlanamadı — internet bağlantınızı kontrol edin.')), 15000)
+      );
+
+      const { data, error } = await Promise.race([upsertPromise, timeoutPromise]);
+
+      if (error) {
+        console.error('[Submit] Supabase upsert hatası:', error.code, error.message, error.details, error.hint);
+        Store.toast('error', 'Teslim edilemedi: ' + (error.message || error.code));
+        return null;
+      }
+
+      console.log('[Submit] Başarılı ✓', data);
+      await _refreshStore(user.id);
+      return true;
+
+    } catch (err) {
+      console.error('[Submit] İstisna:', err.message);
+      Store.toast('error', 'Teslim edilemedi: ' + err.message);
       return null;
     }
-    await _refreshStore(user.id);
-    return true;
   }
 };
 
