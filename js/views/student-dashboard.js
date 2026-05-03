@@ -667,7 +667,8 @@ function _showJoinModal() {
       
       // Enroll
       if (DB.isMock()) {
-        DB.mock.class_enrollments.push({ id: 'ce-' + Date.now().toString(36), student_id: user?.id, class_id: cls.id, enrolled_at: new Date().toISOString() });
+        const payload = { id: DB.generateUUID(), student_id: user?.id, class_id: cls.id, enrolled_at: new Date().toISOString() };
+        await DB.query('class_enrollments', { insert: payload });
       } else {
         const payload = { id: DB.generateUUID(), student_id: user?.id, class_id: cls.id, enrolled_at: new Date().toISOString() };
         const { error } = await DB.query('class_enrollments', { insert: payload });

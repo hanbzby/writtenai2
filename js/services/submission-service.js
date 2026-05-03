@@ -70,9 +70,9 @@ const SubmissionService = {
 
     if (DB.isMock()) {
       if (existing) {
-        Object.assign(existing, { content, word_count: wordCount, language_detected: detectLanguage(content), updated_at: now });
+        await DB.query('submissions', { update: { content, word_count: wordCount, language_detected: detectLanguage(content), updated_at: now }, eq: ['id', existing.id] });
       } else {
-        DB.mock.submissions.push({
+        const newSub = {
           id: 'sub-' + Date.now().toString(36),
           task_id: taskId,
           student_id: user.id,
@@ -82,7 +82,8 @@ const SubmissionService = {
           language_detected: detectLanguage(content),
           submitted_at: now,
           updated_at: now
-        });
+        };
+        await DB.query('submissions', { insert: newSub });
       }
       await _refreshStore(user.id);
       return;
@@ -131,31 +132,19 @@ const SubmissionService = {
     const existing = await _findExisting(taskId, user.id);
 
     if (DB.isMock()) {
+      const payload = {
+        content,
+        status: 'SUBMITTED',
+        word_count: wordCount,
+        language_detected: detectLanguage(content),
+        submitted_at: now,
+        updated_at: now
+      };
       if (existing) {
-        // Update in place (resubmit)
-        Object.assign(existing, {
-          content,
-          status: 'SUBMITTED',
-          word_count: wordCount,
-          language_detected: detectLanguage(content),
-          submitted_at: now,
-          updated_at: now
-        });
+        await DB.query('submissions', { update: payload, eq: ['id', existing.id] });
       } else {
-        DB.mock.submissions.push({
-          id: 'sub-' + Date.now().toString(36),
-          task_id: taskId,
-          student_id: user.id,
-          content,
-          status: 'SUBMITTED',
-          word_count: wordCount,
-          language_detected: detectLanguage(content),
-          submitted_at: now,
-          updated_at: now
-        });
+        await DB.query('submissions', { insert: { ...payload, id: 'sub-' + Date.now().toString(36), task_id: taskId, student_id: user.id } });
       }
-      // Persist to localStorage
-      try { localStorage.setItem('scholarfeedback_mock_db', JSON.stringify(DB.mock)); } catch(e) {}
       await _refreshStore(user.id);
       return true;
     }

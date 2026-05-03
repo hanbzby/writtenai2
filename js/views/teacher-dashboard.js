@@ -846,31 +846,26 @@ function attachEvents() {
       e.stopPropagation();
       if (!confirm("Bu görevin teslim süresini şimdi bitirmek istediğinize emin misiniz? Öğrenciler artık teslim yapamayacak.")) return;
       const taskId = el.dataset.taskId;
-      if (DB.isMock()) {
-        const task = DB.mock.tasks.find(t => t.id === taskId);
-        if (task) task.deadline_datetime = new Date().toISOString();
-      } else {
-        await DB.query('tasks', { update: { deadline_datetime: new Date().toISOString() }, eq: ['id', taskId] });
-      }
+      await DB.query('tasks', { update: { deadline_datetime: new Date().toISOString() }, eq: ['id', taskId] });
       Store.toast('success', 'Görev süresi sonlandırıldı.');
-      _rerender();
+      // DATA_CHANGED triggers silent refresh
     });
   });
 
   // Publish
   document.querySelectorAll('.publish-btn').forEach(el => {
-    el.addEventListener('click', async (e) => { // async eklendi
+    el.addEventListener('click', async (e) => {
       e.stopPropagation();
       if (!confirm(I18n.t('teacher.publishConfirm'))) return;
       const taskId = el.dataset.taskId;
+      // Unified path: DB.query handles both mock and Supabase
+      await DB.query('tasks', { update: { is_published: true }, eq: ['id', taskId] });
       if (DB.isMock()) {
-        const task = DB.mock.tasks.find(t => t.id === taskId);
-        if (task) task.is_published = true;
-        DB.mock.submissions.filter(s => s.task_id === taskId && s.status === 'GRADED')
+        // Also publish all GRADED submissions for this task
+        (DB.mock.submissions || []).filter(s => s.task_id === taskId && s.status === 'GRADED')
           .forEach(s => { s.status = 'PUBLISHED'; });
+        try { localStorage.setItem('scholarfeedback_mock_db', JSON.stringify(DB.mock)); } catch(e) {}
       } else {
-        // Canlı modda görevi yayınla
-        await DB.query('tasks', { update: { is_published: true }, eq: ['id', taskId] });
         // Göreve ait 'GRADED' olan tüm submission'ları 'PUBLISHED' yap
         await DB.client()
           .from('submissions')
@@ -879,7 +874,7 @@ function attachEvents() {
           .eq('status', 'GRADED');
       }
       Store.toast('success', I18n.t('teacher.publish') + ' ✓');
-      _rerender();
+      // DATA_CHANGED triggers silent refresh
     });
   });
 
@@ -1044,15 +1039,14 @@ function _attachModalEvents(classes = []) {
     try {
       if (DB.isMock()) {
         newTask.id = 'task-' + Date.now().toString(36);
-        DB.mock.tasks.push(newTask);
-      } else {
-        const { error } = await DB.query('tasks', { insert: newTask });
-        if (error) throw error;
       }
+      const { error } = await DB.query('tasks', { insert: newTask });
+      if (error) throw error;
       Store.toast('success', I18n.t('teacher.newTask') + ' ✓');
       document.getElementById('task-modal-area').innerHTML = '';
-      _rerender();
+      // DATA_CHANGED from DB.query triggers silent refresh — no manual _rerender() needed
     } catch (err) {
+      console.error('[NewTask]', err);
       Store.toast('error', "Görev oluşturulamadı!");
     }
   });

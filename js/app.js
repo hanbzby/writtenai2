@@ -100,13 +100,13 @@ Store.subscribe(Store.Events.REALTIME_UPDATE, () => {
 });
 
 // Reactive: student submission/report data updated
-Store.subscribe(Store.Events.REFRESH_STUDENT_DATA, (state) => {
-  // Merge incoming submissions/reports into store
-  if (state.submissions !== undefined) {
-    // Already merged by dispatch; just re-render
-  }
+Store.subscribe(Store.Events.REFRESH_STUDENT_DATA, async (state) => {
   const view = Store.getState('activeView');
-  if (view === 'student') _rerenderStudent();
+  if (view === 'student') {
+    // Refetch full data so all derived state (classes, tasks, etc.) is consistent
+    await StudentDashboard.refreshData();
+    _rerenderStudent();
+  }
 });
 
 // ── Initialize ──
