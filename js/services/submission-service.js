@@ -125,12 +125,10 @@ const SubmissionService = {
       this.autoSaveDraft(taskId, content).then(() => {
         Store.toast('info', 'Taslak otomatik kaydedildi', 2000);
       });
-    }, delay);
-  },
-
-  /**
-   * Final submit. Uses UPSERT to atomically handle both new and existing submissions.
-   * Has 15s timeout, full console logging, and always returns true/null (never hangs).
+    },   /**
+   * Final submit. Pure UPSERT — no pre-flight SELECT needed.
+   * PostgreSQL handles insert-vs-update via UNIQUE(task_id, student_id).
+   * 15s timeout prevents hanging. Always returns true (success) or null (failure).
    */
   async submitFinal(taskId, content) {
     const user = Store.getState('currentUser');
@@ -156,11 +154,14 @@ const SubmissionService = {
       return true;
     }
 
-    // ── Supabase mode ──
+    // ── Supabase mode: pure UPSERT, no pre-flight SELECT ──
     const client = DB.client() || window.supabaseClient;
     if (!client) { Store.toast('error', 'Veritabanı bağlantısı kurulamadı.'); return null; }
 
-    const payload = {
+    // Provide a UUID for new inserts. On conflict (existing record), PostgreSQL
+    // keeps the existing id and only updates the other columns.
+    const record = {
+      id: DB.generateUUID(),
       task_id: taskId,
       student_id: user.id,
       content,
@@ -171,11 +172,7 @@ const SubmissionService = {
       updated_at: now
     };
 
-    // Find existing to supply the id for upsert
-    console.log('[Submit] Mevcut kayıt aranıyor…');
-    const existing = await _findExisting(taskId, user.id);
-    const record = existing ? { ...payload, id: existing.id } : { ...payload, id: DB.generateUUID() };
-    console.log('[Submit] Upsert yapılıyor…', { id: record.id, existing: !!existing });
+    console.log('[Submit] Upsert yapılıyor…');
 
     try {
       const upsertPromise = client
@@ -185,24 +182,28 @@ const SubmissionService = {
         .single();
 
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Bağlantı 15s içinde tamamlanamadı — internet bağlantınızı kontrol edin.')), 15000)
+        setTimeout(() => reject(new Error('Bağlantı 15 saniye içinde tamamlanamadı. İnternet bağlantınızı kontrol edin.')), 15000)
       );
 
       const { data, error } = await Promise.race([upsertPromise, timeoutPromise]);
 
       if (error) {
-        console.error('[Submit] Supabase upsert hatası:', error.code, error.message, error.details, error.hint);
-        Store.toast('error', 'Teslim edilemedi: ' + (error.message || error.code));
+        console.error('[Submit] Supabase hatası:', error.code, error.message, error.details, error.hint);
+        Store.toast('error', 'Teslim edilemedi: ' + (error.message || error.code || 'RLS veya bağlantı hatası'));
         return null;
       }
 
-      console.log('[Submit] Başarılı ✓', data);
+      console.log('[Submit] Başarılı ✓', data?.id);
       await _refreshStore(user.id);
       return true;
 
     } catch (err) {
       console.error('[Submit] İstisna:', err.message);
       Store.toast('error', 'Teslim edilemedi: ' + err.message);
+      return null;
+    }
+  }
+};edilemedi: ' + err.message);
       return null;
     }
   }
