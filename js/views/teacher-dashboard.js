@@ -216,12 +216,12 @@ function _renderTasks(t, tasks) {
   
   const activeClassName = _activeClassId ? classes.find(c => c.id === _activeClassId)?.class_name || '' : '';
   
-  // Only count unique students enrolled in the teacher's classes, NOT all students in the app
+  // Sınıf seçiliyse sadece o sınıfın kaydolan öğrenci sayısı,
+  // Seçili değilse öğretmenin tüm sınıflarındaki "toplam öğrenci kaydı" sayısı.
   const teacherClassIds = classes.map(c => c.id);
-  const enrolledStudentIds = new Set(enrollmentsList.filter(e => teacherClassIds.includes(e.class_id)).map(e => e.student_id));
   const totalStudents = _activeClassId 
     ? enrollmentsList.filter(e => e.class_id === _activeClassId).length 
-    : enrolledStudentIds.size;
+    : enrollmentsList.filter(e => teacherClassIds.includes(e.class_id)).length;
 
   const totalSubmitted = subs.filter(s => tasks.some(tk => tk.id === s.task_id)).length;
   const graded = subs.filter(s => tasks.some(tk => tk.id === s.task_id) && (s.status === 'GRADED' || s.status === 'PUBLISHED')).length;
