@@ -560,7 +560,12 @@ function attachEvents() {
         const result = await SubmissionService.submitFinal(taskId, cleaned);
         if (result) {
           Store.toast('success', I18n.t('student.submitted') + ' ✓');
-          // DATA_CHANGED triggers app.js silent refresh, so no explicit _rerender() needed here.
+          // Trigger re-render to update submission status badge
+          await _rerender();
+        } else {
+          // submitFinal returned null = silently failed; re-enable button
+          el.disabled = false;
+          el.textContent = I18n.t('common.submit');
         }
       } catch (err) {
         console.error('[Submit]', err);

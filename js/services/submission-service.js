@@ -21,13 +21,23 @@ async function _findExisting(taskId, userId) {
   }
   const client = DB.client() || window.supabaseClient;
   if (!client) return null;
-  const { data } = await client
-    .from('submissions')
-    .select('id, status')
-    .eq('task_id', taskId)
-    .eq('student_id', userId)
-    .maybeSingle();
-  return data || null;
+  try {
+    // Use limit(1) instead of maybeSingle() to avoid 406 errors from RLS
+    const { data, error } = await client
+      .from('submissions')
+      .select('id, status')
+      .eq('task_id', taskId)
+      .eq('student_id', userId)
+      .limit(1);
+    if (error) {
+      console.warn('[SubmissionService] _findExisting error:', error.message, error.code);
+      return null;
+    }
+    return (data && data.length > 0) ? data[0] : null;
+  } catch (e) {
+    console.warn('[SubmissionService] _findExisting exception:', e);
+    return null;
+  }
 }
 
 /** Refresh submissions in store after a write */
@@ -168,12 +178,17 @@ const SubmissionService = {
     if (existing) {
       const res = await DB.query('submissions', { update: payload, eq: ['id', existing.id] });
       err = res.error;
+      if (err) console.error('[SubmissionService] UPDATE error:', err.message, err.code, err.details);
     } else {
       const res = await DB.query('submissions', { insert: { ...payload, id: DB.generateUUID() } });
       err = res.error;
+      if (err) console.error('[SubmissionService] INSERT error:', err.message, err.code, err.details);
     }
 
-    if (err) { Store.toast('error', 'Teslim edilemedi: ' + err.message); return null; }
+    if (err) {
+      Store.toast('error', 'Teslim edilemedi: ' + (err.message || 'Veritabı hatası — RLS politikasını kontrol edin.'));
+      return null;
+    }
     await _refreshStore(user.id);
     return true;
   }
