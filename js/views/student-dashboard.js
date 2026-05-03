@@ -187,7 +187,7 @@ function _renderClasses(t, myClasses) {
   const teachers = Store.getState('teacherProfiles') || [];
   const allTasks = Store.getState('tasks') || [];
   if (myClasses.length === 0) return `
-    <div class="page-header"><div><h1 class="page-title">${t('student.myTasks')}</h1></div></div>
+    <div class="page-header"><div><h1 class="page-title">${t('class.title') || 'Sınıflarım'}</h1></div></div>
     <div id="join-class-modal-area"></div>
     <div class="empty-state">
       <div class="empty-state-icon">🏫</div>
@@ -197,7 +197,7 @@ function _renderClasses(t, myClasses) {
   `;
   return `
     <div class="page-header">
-      <div><h1 class="page-title">${t('student.myTasks')}</h1><p class="page-subtitle">${t('class.selectClass') || 'Ödevleri görmek için bir sınıf seçin'}</p></div>
+      <div><h1 class="page-title">${t('class.title') || 'Sınıflarım'}</h1><p class="page-subtitle">${t('app.subtitle') || 'Kayıtlı olduğunuz sınıflar'}</p></div>
       <button class="btn btn-secondary btn-sm" id="join-class-header-btn">🔑 ${t('class.join')}</button>
     </div>
     <div id="join-class-modal-area"></div>
