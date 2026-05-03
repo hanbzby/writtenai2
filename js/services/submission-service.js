@@ -178,25 +178,25 @@ const SubmissionService = {
     console.log('[Submit] Upsert yapılıyor…');
 
     try {
-      const upsertPromise = client
-        .from('submissions')
-        .upsert(record, { onConflict: 'task_id,student_id', ignoreDuplicates: false })
-        .select()
-        .single();
+      // Use the application's standard DB.query wrapper instead of direct client calls
+      const upsertPromise = DB.query('submissions', {
+        upsert: record
+      });
 
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Bağlantı 15 saniye içinde tamamlanamadı. İnternet bağlantınızı kontrol edin.')), 15000)
+        setTimeout(() => reject(new Error('Bağlantı 15 saniye içinde tamamlanamadı. Lütfen internet bağlantınızı ve Supabase ayarlarını kontrol edin.')), 15000)
       );
 
-      const { data, error } = await Promise.race([upsertPromise, timeoutPromise]);
-
-      if (error) {
-        console.error('[Submit] Supabase hatası:', error.code, error.message, error.details, error.hint);
-        Store.toast('error', 'Teslim edilemedi: ' + (error.message || error.code || 'RLS veya bağlantı hatası'));
+      const res = await Promise.race([upsertPromise, timeoutPromise]);
+      
+      if (res.error) {
+        console.error('[Submit] Supabase hatası:', res.error);
+        Store.toast('error', 'Teslim edilemedi: ' + (res.error.message || 'Veritabanı hatası'));
         return null;
       }
 
-      console.log('[Submit] Başarılı ✓', data?.id);
+      console.log('[Submit] Başarılı ✓', res.data);
+      // DB.query automatically calls _notifyChange which triggers DATA_CHANGED
       await _refreshStore(user.id);
       return true;
 
