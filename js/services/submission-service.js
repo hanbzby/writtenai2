@@ -206,10 +206,6 @@ const SubmissionService = {
       return null;
     }
   }
-};edilemedi: ' + err.message);
-      return null;
-    }
-  }
 };
 
 export default SubmissionService;
