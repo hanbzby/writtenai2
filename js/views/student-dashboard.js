@@ -278,7 +278,10 @@ function _renderTasks(t, user, tasks, myClasses) {
                 </div>
               ` : ''}
               <div class="mb-4">
-                <div class="text-xs text-muted mb-2">${t('student.timeLeft')}</div>
+                <div class="flex justify-between items-center mb-2">
+                  <div class="text-xs text-muted">${t('student.timeLeft')}</div>
+                  <div class="text-xs text-muted" style="opacity: 0.8;">📅 ${new Date(task.deadline_datetime).toLocaleDateString(I18n.getLang() === 'tr' ? 'tr-TR' : 'en-US', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
+                </div>
                 <div class="countdown countdown--${urgency}" data-deadline="${task.deadline_datetime}">
                   <div class="countdown-unit"><div class="countdown-value" data-unit="days">${String(deadline.days).padStart(2, '0')}</div><div class="countdown-label">${t('time.days')}</div></div>
                   <div class="countdown-unit"><div class="countdown-value" data-unit="hours">${String(deadline.hours).padStart(2, '0')}</div><div class="countdown-label">${t('time.hours')}</div></div>
