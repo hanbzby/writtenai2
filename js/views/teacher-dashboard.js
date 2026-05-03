@@ -52,7 +52,7 @@ async function refreshData() {
     const user = Store.getState('currentUser');
     if (!user) return;
 
-    let classes = [], tasks = [], submissions = [], reports = [], profiles = [];
+    let classes = [], tasks = [], submissions = [], reports = [], profiles = [], enrollments = [];
 
     if (DB.isMock()) {
       classes = DB.mock.classes.filter(c => c.teacher_id === user.id);
@@ -60,14 +60,16 @@ async function refreshData() {
       submissions = DB.mock.submissions;
       reports = DB.mock.feedback_reports;
       profiles = DB.mock.profiles;
+      enrollments = DB.mock.class_enrollments;
     } else {
       // Parallel fetch for speed
-      const [clsRes, tskRes, subRes, repRes, profRes] = await Promise.all([
+      const [clsRes, tskRes, subRes, repRes, profRes, enrRes] = await Promise.all([
         DB.query('classes', { eq: ['teacher_id', user.id] }),
         DB.query('tasks', { eq: ['created_by', user.id] }),
         DB.query('submissions'),
         DB.query('feedback_reports'),
-        DB.query('profiles')
+        DB.query('profiles'),
+        DB.query('class_enrollments')
       ]);
 
       classes = clsRes.data || [];
@@ -75,6 +77,7 @@ async function refreshData() {
       submissions = subRes.data || [];
       reports = repRes.data || [];
       profiles = profRes.data || [];
+      enrollments = enrRes.data || [];
     }
 
     // Sort tasks
@@ -86,7 +89,8 @@ async function refreshData() {
       tasks: tasks,
       submissions: submissions,
       feedbackReports: reports,
-      profiles: profiles
+      profiles: profiles,
+      enrollments: enrollments
     });
   } catch (err) {
     console.error("[Dashboard] Refresh failed", err);
@@ -211,7 +215,13 @@ function _renderTasks(t, tasks) {
   if (_activeClassId) tasks = tasks.filter(tk => tk.class_id === _activeClassId);
   
   const activeClassName = _activeClassId ? classes.find(c => c.id === _activeClassId)?.class_name || '' : '';
-  const totalStudents = _activeClassId ? enrollmentsList.filter(e => e.class_id === _activeClassId).length : profiles.filter(p => p.role === 'STUDENT').length;
+  
+  // Only count unique students enrolled in the teacher's classes, NOT all students in the app
+  const teacherClassIds = classes.map(c => c.id);
+  const enrolledStudentIds = new Set(enrollmentsList.filter(e => teacherClassIds.includes(e.class_id)).map(e => e.student_id));
+  const totalStudents = _activeClassId 
+    ? enrollmentsList.filter(e => e.class_id === _activeClassId).length 
+    : enrolledStudentIds.size;
 
   const totalSubmitted = subs.filter(s => tasks.some(tk => tk.id === s.task_id)).length;
   const graded = subs.filter(s => tasks.some(tk => tk.id === s.task_id) && (s.status === 'GRADED' || s.status === 'PUBLISHED')).length;
