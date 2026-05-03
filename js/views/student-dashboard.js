@@ -21,7 +21,7 @@ function _saveNav() {
 }
 
 const _nav = _loadNav();
-let _activeTab = _nav.tab || 'tasks';
+let _activeTab = _nav.tab || 'classes';
 let _selectedTask = null;
 let _selectedClassId = _nav.classId || null;
 let _countdownInterval = null;
@@ -145,6 +145,9 @@ function _renderSidebar(user, t) {
       </div>
       <div class="sidebar-section">${t('student.dashboard')}</div>
       <nav class="sidebar-nav">
+        <div class="sidebar-link ${_activeTab === 'classes' ? 'active' : ''}" data-tab="classes">
+          <span class="sidebar-link-icon">🏫</span> ${t('class.title') || 'Sınıflarım'}
+        </div>
         <div class="sidebar-link ${_activeTab === 'tasks' ? 'active' : ''}" data-tab="tasks">
           <span class="sidebar-link-icon">📋</span> ${t('student.myTasks')}
         </div>
@@ -174,12 +177,13 @@ function _renderSidebar(user, t) {
 }
 
 function _renderContent(t, user, tasks, myClasses) {
+  if (_activeTab === 'classes') return _renderClasses(t, myClasses);
   if (_activeTab === 'tasks') return _renderTasks(t, user, tasks, myClasses);
   if (_activeTab === 'feedback') return _renderFeedback(t, user, tasks);
   return '';
 }
 
-function _renderClassPicker(t, myClasses) {
+function _renderClasses(t, myClasses) {
   const teachers = Store.getState('teacherProfiles') || [];
   const allTasks = Store.getState('tasks') || [];
   if (myClasses.length === 0) return `
@@ -223,25 +227,21 @@ function _renderClassPicker(t, myClasses) {
 }
 
 function _renderTasks(t, user, tasks, myClasses) {
-  // Step 1: No class selected → show class picker
-  if (!_selectedClassId) return _renderClassPicker(t, myClasses);
-
-  // Step 2: Class selected → show that class's tasks
-  const currentClass = myClasses.find(c => c.id === _selectedClassId);
+  // If no class selected, show tasks from all classes
+  const currentClass = _selectedClassId ? myClasses.find(c => c.id === _selectedClassId) : null;
   const teachers = Store.getState('teacherProfiles') || [];
-  const teacher = teachers.find(p => p.id === currentClass?.teacher_id);
-  const filteredTasks = tasks.filter(tk => tk.class_id === _selectedClassId);
+  const teacher = currentClass ? teachers.find(p => p.id === currentClass.teacher_id) : null;
+  const filteredTasks = _selectedClassId ? tasks.filter(tk => tk.class_id === _selectedClassId) : tasks;
 
   return `
     <div class="page-header">
       <div style="display:flex;align-items:center;gap:12px">
-        <button class="btn btn-ghost btn-sm" id="back-to-classes" style="font-size:18px">← </button>
+        ${_selectedClassId ? `<button class="btn btn-ghost btn-sm" id="back-to-classes" style="font-size:18px">← </button>` : ''}
         <div>
-          <h1 class="page-title">${currentClass?.class_name || ''}</h1>
-          ${teacher ? `<p class="page-subtitle">👤 ${teacher.full_name}</p>` : ''}
+          <h1 class="page-title">${currentClass?.class_name || t('student.myTasks')}</h1>
+          ${teacher ? `<p class="page-subtitle">👤 ${teacher.full_name}</p>` : (!_selectedClassId ? `<p class="page-subtitle">${t('app.subtitle')}</p>` : '')}
         </div>
       </div>
-      <button class="btn btn-secondary btn-sm" id="join-class-header-btn">🔑 ${t('class.join')}</button>
     </div>
     <div id="join-class-modal-area"></div>
     ${filteredTasks.length === 0 ? `
@@ -431,11 +431,34 @@ function attachEvents() {
     });
   });
   // "Ödevlere Bak" button inside class card
-  document.querySelectorAll('.student-class-card .btn-primary[data-class-id]').forEach(el => {
+  document.querySelectorAll('.student-class-card .btn-primary[data-class-id], .student-class-card').forEach(el => {
     el.addEventListener('click', (e) => {
+      if (e.target.closest('.leave-class-btn')) return;
       e.stopPropagation();
-      _selectedClassId = el.dataset.classId;
+      _activeTab = 'tasks';
+      _selectedClassId = el.dataset.classId || el.closest('.student-class-card').dataset.classId;
       _saveNav();
+      _rerender();
+    });
+  });
+
+  // Sınıftan Ayrıl
+  document.querySelectorAll('.leave-class-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const classId = btn.dataset.classId;
+      if (!confirm(I18n.t('class.leaveConfirm') || "Bu sınıftan ayrılmak istediğinize emin misiniz?")) return;
+      
+      const user = Store.getState('currentUser');
+      if (DB.isMock()) {
+         DB.mock.class_enrollments = DB.mock.class_enrollments.filter(ce => !(ce.student_id === user.id && ce.class_id === classId));
+      } else {
+         const { error } = await DB.query('class_enrollments', { del: true, match: { student_id: user.id, class_id: classId }});
+         if (error) { alert("Ayrılma işlemi başarısız: " + error.message); return; }
+      }
+      Store.toast('info', I18n.t('class.left') || 'Sınıftan ayrıldınız.');
+      if (_selectedClassId === classId) _selectedClassId = null;
+      await refreshData();
       _rerender();
     });
   });
@@ -443,6 +466,7 @@ function attachEvents() {
   // Back to class list
   document.getElementById('back-to-classes')?.addEventListener('click', () => {
     _selectedClassId = null;
+    _activeTab = 'classes';
     _saveNav();
     _rerender();
   });
@@ -685,6 +709,8 @@ function _showJoinModal() {
       
       Store.toast('success', I18n.t('class.joined') + ' — ' + cls.class_name);
       area.innerHTML = '';
+      await refreshData(); // Verileri yeniden çek
+      _activeTab = 'classes';
       await _rerender();
     } catch (err) {
       alert("Beklenmeyen Hata: " + err.message);
