@@ -125,7 +125,7 @@ const mock = {
 };
 
 /** Generic mock query helper */
-async function query(table, { select, match, eq, upsert, insert, update, del, order } = {}) {
+async function query(table, { select, match, eq, upsert, onConflict, insert, update, del, order } = {}) {
   if (!_mockMode && _supabase) {
     if (insert) {
       const res = await _supabase.from(table).insert(insert).select();
@@ -133,7 +133,8 @@ async function query(table, { select, match, eq, upsert, insert, update, del, or
       return res;
     }
     if (upsert) {
-      const res = await _supabase.from(table).upsert(upsert).select();
+      const options = onConflict ? { onConflict } : {};
+      const res = await _supabase.from(table).upsert(upsert, options).select();
       if (!res.error) _notifyChange(table, 'UPSERT', res.data?.[0]);
       return res;
     }
@@ -182,15 +183,31 @@ async function query(table, { select, match, eq, upsert, insert, update, del, or
   const changed = (type, record) => { saveMock(); _notifyChange(table, type, record); };
 
   if (upsert) {
-    const existing = (mock[table] || []).findIndex(r => upsert._matchKeys?.every(k => r[k] === upsert[k]));
-    if (existing >= 0) { Object.assign(mock[table][existing], upsert); changed('UPDATE', mock[table][existing]); return { data: [mock[table][existing]], error: null }; }
+    let existing = -1;
+    if (onConflict) {
+      const keys = onConflict.split(',');
+      existing = (mock[table] || []).findIndex(r => keys.every(k => r[k] === upsert[k]));
+    } else if (upsert._matchKeys) {
+      existing = (mock[table] || []).findIndex(r => upsert._matchKeys.every(k => r[k] === upsert[k]));
+    } else if (upsert.id) {
+      existing = (mock[table] || []).findIndex(r => r.id === upsert.id);
+    }
+    
+    if (existing >= 0) { 
+      Object.assign(mock[table][existing], upsert); 
+      changed('UPDATE', mock[table][existing]); 
+      return { data: [mock[table][existing]], error: null }; 
+    }
+    
     if (!mock[table]) mock[table] = [];
+    if (!upsert.id) upsert.id = generateUUID();
     mock[table].push(upsert);
     changed('INSERT', upsert);
     return { data: [upsert], error: null };
   }
   if (insert) {
     if (!mock[table]) mock[table] = [];
+    if (!insert.id) insert.id = generateUUID();
     mock[table].push(insert);
     changed('INSERT', insert);
     return { data: [insert], error: null };

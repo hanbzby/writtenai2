@@ -162,9 +162,9 @@ const SubmissionService = {
     if (!client) { Store.toast('error', 'Veritabanı bağlantısı kurulamadı.'); return null; }
 
     // Provide a UUID for new inserts. On conflict (existing record), PostgreSQL
-    // keeps the existing id and only updates the other columns.
+    // Yeniden teslimlerde (UPDATE) mevcut id'nin ezilmemesi ve yeni kayıt eklenecekse (INSERT)
+    // Postgres'in kendi UUID'sini üretebilmesi için id alanını record'a dahil etmiyoruz.
     const record = {
-      id: DB.generateUUID(),
       task_id: taskId,
       student_id: user.id,
       content,
@@ -178,9 +178,10 @@ const SubmissionService = {
     console.log('[Submit] Upsert yapılıyor…');
 
     try {
-      // Use the application's standard DB.query wrapper instead of direct client calls
+      // Use the application's standard DB.query wrapper with onConflict
       const upsertPromise = DB.query('submissions', {
-        upsert: record
+        upsert: record,
+        onConflict: 'task_id,student_id'
       });
 
       const timeoutPromise = new Promise((_, reject) =>
