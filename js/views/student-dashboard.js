@@ -560,10 +560,10 @@ function attachEvents() {
         const result = await SubmissionService.submitFinal(taskId, cleaned);
         if (result) {
           Store.toast('success', I18n.t('student.submitted') + ' ✓');
-          // Trigger re-render to update submission status badge
-          await _rerender();
+          // _refreshStore inside submitFinal already dispatched REFRESH_STUDENT_DATA
+          // → app.js listener will call _rerenderStudent(). No extra re-render needed.
         } else {
-          // submitFinal returned null = silently failed; re-enable button
+          // submitFinal returned null (DB error shown via toast). Re-enable button.
           el.disabled = false;
           el.textContent = I18n.t('common.submit');
         }
