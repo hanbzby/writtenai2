@@ -668,22 +668,41 @@ function _showJoinModal() {
   document.getElementById('close-join-modal')?.addEventListener('click', () => { area.innerHTML = ''; });
   document.getElementById('join-modal-overlay')?.addEventListener('click', (e) => { if (e.target.id === 'join-modal-overlay') area.innerHTML = ''; });
   document.getElementById('join-code-input')?.focus();
-  document.getElementById('join-code-submit')?.addEventListener('click', async () => {
+  document.getElementById('join-code-input')?.addEventListener('keyup', (e) => {
+    if (e.key === 'Enter') document.getElementById('join-code-submit')?.click();
+  });
+  
+  document.getElementById('join-code-submit')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    if (btn.disabled) return;
+    
     try {
       const code = document.getElementById('join-code-input')?.value?.trim().toUpperCase();
       const errEl = document.getElementById('join-error');
       if (!code || code.length !== 6) { errEl.textContent = I18n.t('class.invalidCode'); errEl.style.display = 'block'; return; }
+      
+      btn.disabled = true;
+      const originalText = btn.textContent;
+      btn.textContent = '⏳...';
       
       let cls = null;
       if (DB.isMock()) {
         cls = DB.mock.classes.find(c => c.join_code === code);
       } else {
         const { data, error } = await DB.query('classes', { eq: ['join_code', code] });
-        if (error) { alert("Sınıf aranırken hata: " + error.message); return; }
+        if (error) { 
+          btn.disabled = false; btn.textContent = originalText;
+          alert("Sınıf aranırken hata: " + error.message); 
+          return; 
+        }
         cls = data?.[0] || null;
       }
 
-      if (!cls) { errEl.textContent = I18n.t('class.invalidCode'); errEl.style.display = 'block'; return; }
+      if (!cls) { 
+        btn.disabled = false; btn.textContent = originalText;
+        errEl.textContent = I18n.t('class.invalidCode'); errEl.style.display = 'block'; 
+        return; 
+      }
       const user = Store.getState('currentUser');
       
       let already = false;
@@ -691,11 +710,17 @@ function _showJoinModal() {
         already = DB.mock.class_enrollments.some(ce => ce.student_id === user?.id && ce.class_id === cls.id);
       } else {
         const { data, error } = await DB.query('class_enrollments', { match: { student_id: user?.id, class_id: cls.id } });
-        if (error) { alert("Kayıt kontrolü hatası: " + error.message); return; }
+        if (error) { 
+          btn.disabled = false; btn.textContent = originalText;
+          alert("Kayıt kontrolü hatası: " + error.message); return; 
+        }
         already = data && data.length > 0;
       }
 
-      if (already) { errEl.textContent = I18n.t('class.alreadyJoined'); errEl.style.display = 'block'; return; }
+      if (already) { 
+        btn.disabled = false; btn.textContent = originalText;
+        errEl.textContent = I18n.t('class.alreadyJoined'); errEl.style.display = 'block'; return; 
+      }
       
       // Enroll
       if (DB.isMock()) {
@@ -704,7 +729,10 @@ function _showJoinModal() {
       } else {
         const payload = { id: DB.generateUUID(), student_id: user?.id, class_id: cls.id, enrolled_at: new Date().toISOString() };
         const { error } = await DB.query('class_enrollments', { insert: payload });
-        if (error) { alert("Sınıfa kayıt olunamadı: " + error.message); return; }
+        if (error) { 
+          btn.disabled = false; btn.textContent = originalText;
+          alert("Sınıfa kayıt olunamadı: " + error.message); return; 
+        }
       }
       
       Store.toast('success', I18n.t('class.joined') + ' — ' + cls.class_name);
@@ -713,6 +741,7 @@ function _showJoinModal() {
       _activeTab = 'classes';
       await _rerender();
     } catch (err) {
+      btn.disabled = false; btn.textContent = originalText;
       alert("Beklenmeyen Hata: " + err.message);
     }
   });
