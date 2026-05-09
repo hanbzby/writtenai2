@@ -49,6 +49,7 @@ function init() {
   _readyPromise = new Promise(resolve => {
     if (_tryConnect()) {
       _ready = true;
+      _checkProtocol();
       resolve();
       return;
     }
@@ -60,6 +61,7 @@ function init() {
       if (_tryConnect()) {
         clearInterval(interval);
         _ready = true;
+        _checkProtocol();
         resolve();
         return;
       }
@@ -81,6 +83,18 @@ function init() {
     }, 100);
   });
   return _readyPromise;
+}
+
+/** Warn if running from file:// protocol (causes intermittent CORS/fetch failures) */
+function _checkProtocol() {
+  if (window.location.protocol === 'file:') {
+    console.warn(
+      '[DB] ⚠️ file:// protokolü üzerinden çalışıyorsunuz. Bu, Supabase REST API isteklerinde tutarsız zaman aşımlarına neden olabilir.',
+      '\n→ Çözüm: Uygulamayı bir HTTP sunucu üzerinden çalıştırın.',
+      '\n→ Örnek: npx serve .',
+      '\n→ Veya: python -m http.server 8000'
+    );
+  }
 }
 
 /** Wait until DB is initialized (call from any service before first query) */
@@ -192,12 +206,11 @@ function _withTimeout(promise, ms = 8000) {
   ]);
 }
 
-/** Generic mock query helper */
-async function query(table, { select, match, eq, upsert, onConflict, insert, update, del, order } = {}) {
-  // Ensure DB is initialized before any query
-  await ensureReady();
-
-  if (!_mockMode && _supabase) {
+/**
+ * Execute a single Supabase operation (no retry).
+ * Wrapped by query() which adds retry logic.
+ */
+async function _execSupabase(table, { select, match, eq, upsert, onConflict, insert, update, del, order } = {}) {
     if (insert) {
       const res = await _withTimeout(_supabase.from(table).insert(insert).select());
       if (!res.error) _notifyChange(table, 'INSERT', res.data?.[0]);
@@ -223,7 +236,6 @@ async function query(table, { select, match, eq, upsert, onConflict, insert, upd
       if (match) Object.entries(match).forEach(([k, v]) => { q = q.eq(k, v); });
       const res = await _withTimeout(q.select());
       if (res.error) return res;
-      // Always notify on delete attempt (even if 0 rows — let caller handle)
       _notifyChange(table, 'DELETE', null);
       return res;
     }
@@ -239,6 +251,33 @@ async function query(table, { select, match, eq, upsert, onConflict, insert, upd
       }
     }
     return await _withTimeout(q);
+}
+
+/**
+ * Generic query helper with automatic retry.
+ * If a Supabase call times out, it retries ONCE before giving up.
+ */
+async function query(table, opts = {}) {
+  // Ensure DB is initialized before any query
+  await ensureReady();
+
+  if (!_mockMode && _supabase) {
+    try {
+      return await _execSupabase(table, opts);
+    } catch (firstErr) {
+      // If it was a timeout, retry once
+      if (firstErr.message && firstErr.message.includes('tamamlanamadı')) {
+        console.warn(`[DB] İlk deneme başarısız (${table}), tekrar deneniyor…`);
+        try {
+          return await _execSupabase(table, opts);
+        } catch (retryErr) {
+          console.error(`[DB] İkinci deneme de başarısız (${table}):`, retryErr.message);
+          return { data: null, error: { message: retryErr.message } };
+        }
+      }
+      // Non-timeout error, return as error object
+      return { data: null, error: { message: firstErr.message } };
+    }
   }
   // Mock mode
   await new Promise(r => setTimeout(r, 80 + Math.random() * 80));
