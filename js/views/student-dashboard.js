@@ -442,26 +442,7 @@ function attachEvents() {
     });
   });
 
-  // Sınıftan Ayrıl
-  document.querySelectorAll('.leave-class-btn').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const classId = btn.dataset.classId;
-      if (!confirm(I18n.t('class.leaveConfirm') || "Bu sınıftan ayrılmak istediğinize emin misiniz?")) return;
-      
-      const user = Store.getState('currentUser');
-      if (DB.isMock()) {
-         DB.mock.class_enrollments = DB.mock.class_enrollments.filter(ce => !(ce.student_id === user.id && ce.class_id === classId));
-      } else {
-         const { error } = await DB.query('class_enrollments', { del: true, match: { student_id: user.id, class_id: classId }});
-         if (error) { alert("Ayrılma işlemi başarısız: " + error.message); return; }
-      }
-      Store.toast('info', I18n.t('class.left') || 'Sınıftan ayrıldınız.');
-      if (_selectedClassId === classId) _selectedClassId = null;
-      await refreshData();
-      _rerender();
-    });
-  });
+
 
   // Back to class list
   document.getElementById('back-to-classes')?.addEventListener('click', () => {
