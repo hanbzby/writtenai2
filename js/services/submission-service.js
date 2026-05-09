@@ -157,12 +157,8 @@ const SubmissionService = {
     }
 
     // ── Supabase mode ──
-    // Master timeout wraps the ENTIRE chain: findExisting + insert/update + refreshStore
-    const masterTimeout = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Bağlantı 10 saniye içinde tamamlanamadı. Lütfen internet bağlantınızı ve Supabase ayarlarını kontrol edin.')), 10000)
-    );
-
-    const work = async () => {
+    // Direct execution — no timeout wrapper (raw queries complete in ~300ms)
+    try {
       const client = DB.client() || window.supabaseClient;
       if (!client) throw new Error('Veritabanı bağlantısı kurulamadı.');
 
@@ -197,15 +193,10 @@ const SubmissionService = {
 
       console.log('[Submit] Başarılı ✓', res ? res.data : null);
 
-      // Step 3: Refresh store (non-blocking — don't let a failure here kill success)
+      // Step 3: Refresh store (non-blocking)
       try { await _refreshStore(user.id); } catch (e) { console.warn('[Submit] Refresh sonrası hata (önemsiz):', e); }
 
       return true;
-    };
-
-    try {
-      const result = await Promise.race([work(), masterTimeout]);
-      return result;
     } catch (err) {
       console.error('[Submit] İstisna:', err.message);
       Store.toast('error', 'Teslim edilemedi: ' + err.message);

@@ -192,91 +192,59 @@ const mock = {
 };
 
 /**
- * Wrap a Supabase promise with a timeout to prevent indefinite hangs.
- * @param {Promise} promise - The Supabase query promise
- * @param {number} ms - Timeout in milliseconds (default 12s)
- * @returns {Promise} - Resolves with the result or rejects with timeout error
+ * Execute a Supabase query directly.
+ * No timeout wrapper — raw Supabase queries work fine (~300ms).
+ * Errors are caught and returned as { data: null, error: {...} }.
  */
-function _withTimeout(promise, ms = 8000) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`İşlem ${ms / 1000}s içinde tamamlanamadı. İnternet bağlantınızı kontrol edin.`)), ms)
-    )
-  ]);
-}
-
-/**
- * Execute a single Supabase operation (no retry).
- * Wrapped by query() which adds retry logic.
- */
-async function _execSupabase(table, { select, match, eq, upsert, onConflict, insert, update, del, order } = {}) {
-    if (insert) {
-      const res = await _withTimeout(_supabase.from(table).insert(insert).select());
-      if (!res.error) _notifyChange(table, 'INSERT', res.data?.[0]);
-      return res;
-    }
-    if (upsert) {
-      const options = onConflict ? { onConflict } : {};
-      const res = await _withTimeout(_supabase.from(table).upsert(upsert, options).select());
-      if (!res.error) _notifyChange(table, 'UPSERT', res.data?.[0]);
-      return res;
-    }
-    if (update) {
-      let q = _supabase.from(table).update(update);
-      if (eq) q = q.eq(eq[0], eq[1]);
-      if (match) Object.entries(match).forEach(([k, v]) => { q = q.eq(k, v); });
-      const res = await _withTimeout(q.select());
-      if (!res.error) _notifyChange(table, 'UPDATE', res.data?.[0]);
-      return res;
-    }
-    if (del) {
-      let q = _supabase.from(table).delete();
-      if (eq) q = q.eq(eq[0], eq[1]);
-      if (match) Object.entries(match).forEach(([k, v]) => { q = q.eq(k, v); });
-      const res = await _withTimeout(q.select());
-      if (res.error) return res;
-      _notifyChange(table, 'DELETE', null);
-      return res;
-    }
-    let q = _supabase.from(table).select(select || '*');
-    if (eq) q = q.eq(eq[0], eq[1]);
-    if (match) Object.entries(match).forEach(([k, v]) => { q = q.eq(k, v); });
-    if (order) {
-      if (Array.isArray(order)) {
-        q = q.order(order[0], order[1] || { ascending: false });
-      } else if (typeof order === 'string') {
-        const parts = order.split('.');
-        q = q.order(parts[0], { ascending: parts[1] !== 'desc' });
-      }
-    }
-    return await _withTimeout(q);
-}
-
-/**
- * Generic query helper with automatic retry.
- * If a Supabase call times out, it retries ONCE before giving up.
- */
-async function query(table, opts = {}) {
+async function query(table, { select, match, eq, upsert, onConflict, insert, update, del, order } = {}) {
   // Ensure DB is initialized before any query
   await ensureReady();
 
   if (!_mockMode && _supabase) {
     try {
-      return await _execSupabase(table, opts);
-    } catch (firstErr) {
-      // If it was a timeout, retry once
-      if (firstErr.message && firstErr.message.includes('tamamlanamadı')) {
-        console.warn(`[DB] İlk deneme başarısız (${table}), tekrar deneniyor…`);
-        try {
-          return await _execSupabase(table, opts);
-        } catch (retryErr) {
-          console.error(`[DB] İkinci deneme de başarısız (${table}):`, retryErr.message);
-          return { data: null, error: { message: retryErr.message } };
+      if (insert) {
+        const res = await _supabase.from(table).insert(insert).select();
+        if (!res.error) _notifyChange(table, 'INSERT', res.data?.[0]);
+        return res;
+      }
+      if (upsert) {
+        const options = onConflict ? { onConflict } : {};
+        const res = await _supabase.from(table).upsert(upsert, options).select();
+        if (!res.error) _notifyChange(table, 'UPSERT', res.data?.[0]);
+        return res;
+      }
+      if (update) {
+        let q = _supabase.from(table).update(update);
+        if (eq) q = q.eq(eq[0], eq[1]);
+        if (match) Object.entries(match).forEach(([k, v]) => { q = q.eq(k, v); });
+        const res = await q.select();
+        if (!res.error) _notifyChange(table, 'UPDATE', res.data?.[0]);
+        return res;
+      }
+      if (del) {
+        let q = _supabase.from(table).delete();
+        if (eq) q = q.eq(eq[0], eq[1]);
+        if (match) Object.entries(match).forEach(([k, v]) => { q = q.eq(k, v); });
+        const res = await q.select();
+        if (res.error) return res;
+        _notifyChange(table, 'DELETE', null);
+        return res;
+      }
+      let q = _supabase.from(table).select(select || '*');
+      if (eq) q = q.eq(eq[0], eq[1]);
+      if (match) Object.entries(match).forEach(([k, v]) => { q = q.eq(k, v); });
+      if (order) {
+        if (Array.isArray(order)) {
+          q = q.order(order[0], order[1] || { ascending: false });
+        } else if (typeof order === 'string') {
+          const parts = order.split('.');
+          q = q.order(parts[0], { ascending: parts[1] !== 'desc' });
         }
       }
-      // Non-timeout error, return as error object
-      return { data: null, error: { message: firstErr.message } };
+      return await q;
+    } catch (err) {
+      console.error(`[DB] Query error (${table}):`, err.message);
+      return { data: null, error: { message: err.message } };
     }
   }
   // Mock mode
