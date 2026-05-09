@@ -58,19 +58,27 @@ async function refreshData() {
       myClasses = myClassIds.map(id => DB.mock.classes.find(c => c.id === id)).filter(Boolean);
       subs = DB.mock.submissions.filter(s => s.student_id === user.id);
       reports = DB.mock.feedback_reports.filter(r => subs.some(s => s.id === r.submission_id));
-      // Fetch teacher profiles for all classes the student belongs to
       const teacherIds = [...new Set(myClasses.map(c => c.teacher_id).filter(Boolean))];
       teacherProfiles = DB.mock.profiles.filter(p => teacherIds.includes(p.id));
     } else {
-      const { data: enrolls } = await DB.query('class_enrollments', { eq: ['student_id', user.id] });
+      const client = window.supabaseClient;
+      if (!client) { console.warn('[Student] No supabaseClient'); return; }
+
+      // Step 1: Get enrollments
+      const { data: enrolls, error: enrollErr } = await client
+        .from('class_enrollments')
+        .select('class_id')
+        .eq('student_id', user.id);
+      if (enrollErr) { console.error('[Student] Enroll fetch error:', enrollErr.message); }
       myClassIds = (enrolls || []).map(ce => ce.class_id);
       
       if (myClassIds.length > 0) {
+        // Step 2: Parallel fetch of all data
         const [tskRes, clsRes, subRes, repRes] = await Promise.all([
-          DB.query('tasks'),
-          DB.query('classes'),
-          DB.query('submissions', { eq: ['student_id', user.id] }),
-          DB.query('feedback_reports')
+          client.from('tasks').select('*'),
+          client.from('classes').select('*'),
+          client.from('submissions').select('*').eq('student_id', user.id),
+          client.from('feedback_reports').select('*')
         ]);
 
         tasks = (tskRes.data || []).filter(tk => myClassIds.includes(tk.class_id));
@@ -78,10 +86,10 @@ async function refreshData() {
         subs = subRes.data || [];
         reports = (repRes.data || []).filter(r => subs.some(s => s.id === r.submission_id));
 
-        // Fetch teacher profiles
+        // Step 3: Teacher profiles
         const teacherIds = [...new Set(myClasses.map(c => c.teacher_id).filter(Boolean))];
         if (teacherIds.length > 0) {
-          const { data: profData } = await DB.query('profiles');
+          const { data: profData } = await client.from('profiles').select('*');
           teacherProfiles = (profData || []).filter(p => teacherIds.includes(p.id));
         }
       }
@@ -488,7 +496,7 @@ function attachEvents() {
     document.getElementById(id)?.addEventListener('click', _showJoinModal);
   });
 
-  // Leave class
+  // Leave class — uses window.supabaseClient directly (proven stable)
   document.querySelectorAll('.leave-class-btn').forEach(el => {
     el.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -502,19 +510,23 @@ function attachEvents() {
       el.disabled = true;
       el.textContent = '⏳';
       try {
-        const res = await DB.query('class_enrollments', { del: true, match: { class_id: classId, student_id: user.id } });
-        if (res.error) throw res.error;
+        const client = window.supabaseClient;
+        if (!client) throw new Error('DB bağlantısı yok');
+        const { error } = await client.from('class_enrollments')
+          .delete()
+          .eq('class_id', classId)
+          .eq('student_id', user.id);
+        if (error) throw error;
         
         if (_selectedClassId === classId) { _selectedClassId = null; _saveNav(); }
         Store.toast('success', 'Sınıftan ayrıldınız.');
-        // Explicit refresh to guarantee UI update
         await refreshData();
         _rerender();
       } catch (err) {
         console.error('[LeaveClass]', err);
         el.disabled = false;
         el.textContent = '✖';
-        Store.toast('error', 'Sınıftan ayrılırken hata oluştu: ' + (err.message || ''));
+        Store.toast('error', 'Sınıftan ayrılırken hata: ' + (err.message || ''));
       }
     });
   });
@@ -568,20 +580,47 @@ function attachEvents() {
       el.textContent = '⏳ Gönderiliyor...';
 
       try {
-        const result = await SubmissionService.submitFinal(taskId, cleaned);
-        if (result) {
-          Store.toast('success', I18n.t('student.submitted') + ' ✓');
-          // Explicit rerender to guarantee UI shows "Teslim Edildi"
-          await refreshData();
-          _rerender();
-          return; // el is now detached from DOM, don't touch it
+        const user = Store.getState('currentUser');
+        const client = window.supabaseClient;
+        if (!client || !user) throw new Error('Oturum veya bağlantı hatası');
+
+        const now = new Date().toISOString();
+        const wordCount = cleaned.split(/\s+/).filter(Boolean).length;
+        const langDetect = /[çğışöüÇĞİŞÖÜ]/.test(cleaned) ? 'tr' : 'en';
+
+        // Check for existing submission
+        const { data: existing } = await client
+          .from('submissions')
+          .select('id')
+          .eq('task_id', taskId)
+          .eq('student_id', user.id)
+          .limit(1);
+
+        const record = {
+          task_id: taskId, student_id: user.id, content: cleaned,
+          status: 'SUBMITTED', word_count: wordCount,
+          language_detected: langDetect, submitted_at: now, updated_at: now
+        };
+
+        let res;
+        if (existing && existing.length > 0) {
+          res = await client.from('submissions').update(record).eq('id', existing[0].id).select();
+        } else {
+          record.id = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2);
+          res = await client.from('submissions').insert(record).select();
         }
-        // submitFinal returned null → it already showed a toast error
+
+        if (res.error) throw res.error;
+
+        console.log('[Submit] Başarılı ✓');
+        Store.toast('success', I18n.t('student.submitted') + ' ✓');
+        await refreshData();
+        _rerender();
+        return;
       } catch (err) {
         console.error('[Submit]', err);
         Store.toast('error', 'Teslim edilemedi: ' + (err.message || 'Bilinmeyen hata'));
       }
-      // Re-enable button on any non-success path
       el.disabled = false;
       el.textContent = I18n.t('common.submit');
     });
@@ -669,63 +708,68 @@ function _showJoinModal() {
       btn.disabled = true;
       btn.textContent = '⏳...';
 
-      // DB.query already has built-in 8s timeout per call
-      let cls = null;
-      if (DB.isMock()) {
-        cls = DB.mock.classes.find(c => c.join_code === code);
-      } else {
-        const { data, error } = await DB.query('classes', { eq: ['join_code', code] });
-        if (error) { 
-          btn.disabled = false; btn.textContent = originalText;
-          Store.toast('error', "Sınıf aranırken hata: " + error.message); 
-          return; 
-        }
-        cls = data?.[0] || null;
-      }
+      const client = window.supabaseClient;
+      const user = Store.getState('currentUser');
+      if (!client || !user) throw new Error('Oturum veya bağlantı hatası');
 
+      // Step 1: Find class by join code
+      const { data: classData, error: classErr } = await client
+        .from('classes')
+        .select('*')
+        .eq('join_code', code)
+        .limit(1);
+      
+      if (classErr) { 
+        btn.disabled = false; btn.textContent = originalText;
+        Store.toast('error', 'Sınıf aranırken hata: ' + classErr.message); return; 
+      }
+      
+      const cls = classData?.[0];
       if (!cls) { 
         btn.disabled = false; btn.textContent = originalText;
-        errEl.textContent = I18n.t('class.invalidCode'); errEl.style.display = 'block'; 
-        return; 
+        errEl.textContent = I18n.t('class.invalidCode'); errEl.style.display = 'block'; return; 
       }
-      const user = Store.getState('currentUser');
       
-      let already = false;
-      if (DB.isMock()) {
-        already = DB.mock.class_enrollments.some(ce => ce.student_id === user?.id && ce.class_id === cls.id);
-      } else {
-        const { data, error } = await DB.query('class_enrollments', { match: { student_id: user?.id, class_id: cls.id } });
-        if (error) { 
-          btn.disabled = false; btn.textContent = originalText;
-          Store.toast('error', "Kayıt kontrolü hatası: " + error.message); return; 
-        }
-        already = data && data.length > 0;
+      // Step 2: Check if already enrolled
+      const { data: enrollData, error: enrollErr } = await client
+        .from('class_enrollments')
+        .select('id')
+        .eq('student_id', user.id)
+        .eq('class_id', cls.id)
+        .limit(1);
+      
+      if (enrollErr) { 
+        btn.disabled = false; btn.textContent = originalText;
+        Store.toast('error', 'Kayıt kontrolü hatası: ' + enrollErr.message); return; 
       }
-
-      if (already) { 
+      
+      if (enrollData && enrollData.length > 0) { 
         btn.disabled = false; btn.textContent = originalText;
         errEl.textContent = I18n.t('class.alreadyJoined'); errEl.style.display = 'block'; return; 
       }
       
-      // Enroll
-      const payload = { id: DB.generateUUID(), student_id: user?.id, class_id: cls.id, enrolled_at: new Date().toISOString() };
-      const res = await DB.query('class_enrollments', { insert: payload });
-      if (res.error) { 
+      // Step 3: Enroll
+      const newId = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2);
+      const { error: insertErr } = await client
+        .from('class_enrollments')
+        .insert({ id: newId, student_id: user.id, class_id: cls.id, enrolled_at: new Date().toISOString() });
+      
+      if (insertErr) { 
         btn.disabled = false; btn.textContent = originalText;
-        Store.toast('error', "Sınıfa kayıt olunamadı: " + res.error.message); return; 
+        Store.toast('error', 'Sınıfa kayıt olunamadı: ' + insertErr.message); return; 
       }
       
       Store.toast('success', I18n.t('class.joined') + ' — ' + cls.class_name);
       const area = document.getElementById('join-class-modal-area');
       if (area) area.innerHTML = '';
       
-      await refreshData(); 
       _activeTab = 'classes';
       _saveNav();
-      await _rerender();
+      await refreshData();
+      _rerender();
     } catch (err) {
       btn.disabled = false; btn.textContent = originalText;
-      Store.toast('error', "Hata: " + err.message);
+      Store.toast('error', 'Hata: ' + err.message);
     }
   });
 }
