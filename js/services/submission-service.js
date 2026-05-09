@@ -178,25 +178,28 @@ const SubmissionService = {
     console.log('[Submit] Upsert yapılıyor…');
 
     try {
-      // Use the application's standard DB.query wrapper with onConflict
-      const upsertPromise = DB.query('submissions', {
-        upsert: record,
-        onConflict: 'task_id,student_id'
-      });
-
+      const existing = await _findExisting(taskId, user.id);
+      
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Bağlantı 15 saniye içinde tamamlanamadı. Lütfen internet bağlantınızı ve Supabase ayarlarını kontrol edin.')), 15000)
       );
 
-      const res = await Promise.race([upsertPromise, timeoutPromise]);
+      let operationPromise;
+      if (existing) {
+        operationPromise = DB.query('submissions', { update: record, eq: ['id', existing.id] });
+      } else {
+        operationPromise = DB.query('submissions', { insert: { ...record, id: DB.generateUUID() } });
+      }
+
+      const res = await Promise.race([operationPromise, timeoutPromise]);
       
-      if (res.error) {
+      if (res && res.error) {
         console.error('[Submit] Supabase hatası:', res.error);
         Store.toast('error', 'Teslim edilemedi: ' + (res.error.message || 'Veritabanı hatası'));
         return null;
       }
 
-      console.log('[Submit] Başarılı ✓', res.data);
+      console.log('[Submit] Başarılı ✓', res ? res.data : null);
       // DB.query automatically calls _notifyChange which triggers DATA_CHANGED
       await _refreshStore(user.id);
       return true;
