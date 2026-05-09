@@ -505,6 +505,14 @@ function _renderTaskModal(t, classes = []) {
             </div>
           </div>
           <div class="form-group">
+            <label class="form-label">Kelime Sınırı (Opsiyonel)</label>
+            <div class="flex gap-2">
+              <input type="number" id="tf-min-words" class="input" placeholder="Min Kelime" min="0" style="flex:1">
+              <input type="number" id="tf-max-words" class="input" placeholder="Max Kelime" min="0" style="flex:1">
+            </div>
+            <div class="form-hint">Sınır yoksa boş bırakın.</div>
+          </div>
+          <div class="form-group">
             <label class="form-label">${t('task.criteria')}</label>
             <textarea id="tf-criteria" class="textarea" placeholder="${t('task.criteriaHint')}" rows="3"></textarea>
             <div class="form-hint">One criterion per line</div>
@@ -1035,6 +1043,18 @@ function _attachModalEvents(classes = []) {
     e.preventDefault();
     const criteriaRaw = document.getElementById('tf-criteria').value;
     const criteria = criteriaRaw.split('\n').map(s => s.trim()).filter(Boolean);
+    
+    const minWords = parseInt(document.getElementById('tf-min-words')?.value);
+    const maxWords = parseInt(document.getElementById('tf-max-words')?.value);
+
+    if (!isNaN(minWords) && !isNaN(maxWords) && minWords > 0 && maxWords >= minWords) {
+      criteria.unshift(`The submission MUST be between ${minWords} and ${maxWords} words. Strongly penalize if it is too short or too long.`);
+    } else if (!isNaN(minWords) && minWords > 0) {
+      criteria.unshift(`The submission MUST be at least ${minWords} words. Strongly penalize if it is shorter.`);
+    } else if (!isNaN(maxWords) && maxWords > 0) {
+      criteria.unshift(`The submission MUST NOT exceed ${maxWords} words. Strongly penalize if it is longer.`);
+    }
+
     const classSelect = document.getElementById('tf-class');
     const classId = (classSelect && classSelect.value) ? classSelect.value : null;
 

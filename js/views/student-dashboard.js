@@ -657,20 +657,27 @@ function _showJoinModal() {
     const btn = e.currentTarget;
     if (btn.disabled) return;
     
+    const originalText = btn.textContent;
     try {
       const code = document.getElementById('join-code-input')?.value?.trim().toUpperCase();
       const errEl = document.getElementById('join-error');
       if (!code || code.length !== 6) { errEl.textContent = I18n.t('class.invalidCode'); errEl.style.display = 'block'; return; }
       
       btn.disabled = true;
-      const originalText = btn.textContent;
       btn.textContent = '⏳...';
       
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Bağlantı zaman aşımına uğradı. Lütfen internet bağlantınızı kontrol edin.')), 15000)
+      );
+
       let cls = null;
       if (DB.isMock()) {
         cls = DB.mock.classes.find(c => c.join_code === code);
       } else {
-        const { data, error } = await DB.query('classes', { eq: ['join_code', code] });
+        const { data, error } = await Promise.race([
+          DB.query('classes', { eq: ['join_code', code] }),
+          timeoutPromise
+        ]);
         if (error) { 
           btn.disabled = false; btn.textContent = originalText;
           alert("Sınıf aranırken hata: " + error.message); 
@@ -690,7 +697,10 @@ function _showJoinModal() {
       if (DB.isMock()) {
         already = DB.mock.class_enrollments.some(ce => ce.student_id === user?.id && ce.class_id === cls.id);
       } else {
-        const { data, error } = await DB.query('class_enrollments', { match: { student_id: user?.id, class_id: cls.id } });
+        const { data, error } = await Promise.race([
+          DB.query('class_enrollments', { match: { student_id: user?.id, class_id: cls.id } }),
+          timeoutPromise
+        ]);
         if (error) { 
           btn.disabled = false; btn.textContent = originalText;
           alert("Kayıt kontrolü hatası: " + error.message); return; 
@@ -709,16 +719,21 @@ function _showJoinModal() {
         await DB.query('class_enrollments', { insert: payload });
       } else {
         const payload = { id: DB.generateUUID(), student_id: user?.id, class_id: cls.id, enrolled_at: new Date().toISOString() };
-        const { error } = await DB.query('class_enrollments', { insert: payload });
-        if (error) { 
+        const res = await Promise.race([
+          DB.query('class_enrollments', { insert: payload }),
+          timeoutPromise
+        ]);
+        if (res.error) { 
           btn.disabled = false; btn.textContent = originalText;
-          alert("Sınıfa kayıt olunamadı: " + error.message); return; 
+          alert("Sınıfa kayıt olunamadı: " + res.error.message); return; 
         }
       }
       
       Store.toast('success', I18n.t('class.joined') + ' — ' + cls.class_name);
-      area.innerHTML = '';
-      await refreshData(); // Verileri yeniden çek
+      const area = document.getElementById('join-class-modal-area');
+      if (area) area.innerHTML = '';
+      
+      await refreshData(); 
       _activeTab = 'classes';
       await _rerender();
     } catch (err) {
