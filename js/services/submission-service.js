@@ -15,30 +15,25 @@ function detectLanguage(text) {
   return /[çğışöüÇĞİŞÖÜ]/.test(text) ? 'tr' : 'en';
 }
 
-/** Find an existing submission for a task+user in mock or DB */
+/** Find an existing submission for a task+user — uses DB.query (has built-in timeout) */
 async function _findExisting(taskId, userId) {
   if (DB.isMock()) {
     return DB.mock.submissions.find(
       s => s.task_id === taskId && s.student_id === userId
     ) || null;
   }
-  const client = DB.client() || window.supabaseClient;
-  if (!client) return null;
   try {
-    // Use limit(1) instead of maybeSingle() to avoid 406 errors from RLS
-    const { data, error } = await client
-      .from('submissions')
-      .select('id, status')
-      .eq('task_id', taskId)
-      .eq('student_id', userId)
-      .limit(1);
+    const { data, error } = await DB.query('submissions', {
+      select: 'id, status',
+      match: { task_id: taskId, student_id: userId }
+    });
     if (error) {
-      console.warn('[SubmissionService] _findExisting error:', error.message, error.code);
+      console.warn('[SubmissionService] _findExisting error:', error.message);
       return null;
     }
     return (data && data.length > 0) ? data[0] : null;
   } catch (e) {
-    console.warn('[SubmissionService] _findExisting exception:', e);
+    console.warn('[SubmissionService] _findExisting exception:', e.message);
     return null;
   }
 }
@@ -164,7 +159,7 @@ const SubmissionService = {
     // ── Supabase mode ──
     // Master timeout wraps the ENTIRE chain: findExisting + insert/update + refreshStore
     const masterTimeout = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Bağlantı 15 saniye içinde tamamlanamadı. Lütfen internet bağlantınızı ve Supabase ayarlarını kontrol edin.')), 15000)
+      setTimeout(() => reject(new Error('Bağlantı 10 saniye içinde tamamlanamadı. Lütfen internet bağlantınızı ve Supabase ayarlarını kontrol edin.')), 10000)
     );
 
     const work = async () => {

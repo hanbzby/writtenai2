@@ -183,7 +183,7 @@ const mock = {
  * @param {number} ms - Timeout in milliseconds (default 12s)
  * @returns {Promise} - Resolves with the result or rejects with timeout error
  */
-function _withTimeout(promise, ms = 12000) {
+function _withTimeout(promise, ms = 8000) {
   return Promise.race([
     promise,
     new Promise((_, reject) =>
