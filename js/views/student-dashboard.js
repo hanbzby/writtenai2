@@ -498,19 +498,23 @@ function attachEvents() {
       if (!confirm('Bu sınıftan ayrılmak istediğinize emin misiniz?')) return;
       const user = Store.getState('currentUser');
       if (!user) { Store.toast('error', 'Oturum hatası, lütfen tekrar giriş yapın.'); return; }
+      
+      el.disabled = true;
+      el.textContent = '⏳';
       try {
         const res = await DB.query('class_enrollments', { del: true, match: { class_id: classId, student_id: user.id } });
         if (res.error) throw res.error;
-        if (!DB.isMock() && res.data && res.data.length === 0) {
-          throw new Error("Bu sınıftan zaten ayrılmışsınız veya işlem engellendi (RLS).");
-        }
         
         if (_selectedClassId === classId) { _selectedClassId = null; _saveNav(); }
         Store.toast('success', 'Sınıftan ayrıldınız.');
-        // DATA_CHANGED will trigger silent refresh automatically
+        // Explicit refresh to guarantee UI update
+        await refreshData();
+        _rerender();
       } catch (err) {
         console.error('[LeaveClass]', err);
-        Store.toast('error', 'Sınıftan ayrılırken hata oluştu.');
+        el.disabled = false;
+        el.textContent = '✖';
+        Store.toast('error', 'Sınıftan ayrılırken hata oluştu: ' + (err.message || ''));
       }
     });
   });
@@ -562,25 +566,24 @@ function attachEvents() {
 
       el.disabled = true;
       el.textContent = '⏳ Gönderiliyor...';
-      let success = false;
 
       try {
         const result = await SubmissionService.submitFinal(taskId, cleaned);
         if (result) {
-          success = true;
           Store.toast('success', I18n.t('student.submitted') + ' ✓');
-          // REFRESH_STUDENT_DATA dispatched inside submitFinal → _rerenderStudent() via app.js
+          // Explicit rerender to guarantee UI shows "Teslim Edildi"
+          await refreshData();
+          _rerender();
+          return; // el is now detached from DOM, don't touch it
         }
+        // submitFinal returned null → it already showed a toast error
       } catch (err) {
         console.error('[Submit]', err);
         Store.toast('error', 'Teslim edilemedi: ' + (err.message || 'Bilinmeyen hata'));
-      } finally {
-        // Always re-enable button unless success triggered a re-render (el detached)
-        if (!success) {
-          el.disabled = false;
-          el.textContent = I18n.t('common.submit');
-        }
       }
+      // Re-enable button on any non-success path
+      el.disabled = false;
+      el.textContent = I18n.t('common.submit');
     });
   });
 

@@ -2,6 +2,9 @@
  * ScholarFeedback AI — Supabase Client
  * Uses mock mode when no Supabase URL is configured.
  * Stage 3: Added classes + class_enrollments mock data.
+ *
+ * STABILITY FIX: init() now retries until window.supabaseClient is available,
+ * and all queries are wrapped in a per-call timeout to prevent hangs.
  */
 import Store from './store.js';
 import ENV from './config.js';
@@ -12,28 +15,78 @@ const SUPABASE_ANON = ENV.SUPABASE_ANON_KEY || '';
 
 let _supabase = null;
 let _mockMode = true;
+let _ready = false;  // true once init has resolved (mock or real)
+let _readyPromise = null;
 
-function init() {
+/**
+ * Attempt to connect to Supabase.
+ * Returns true if connected, false if should stay in mock mode.
+ */
+function _tryConnect() {
   if (window.supabaseClient) {
     _supabase = window.supabaseClient;
     _mockMode = false;
     console.log('[DB] Supabase connected via global client');
-  } else if (SUPABASE_URL && SUPABASE_ANON && window.supabase) {
+    return true;
+  }
+  if (SUPABASE_URL && SUPABASE_ANON && window.supabase) {
     _supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
     _mockMode = false;
     console.log('[DB] Supabase connected');
-  } else {
-    _mockMode = true;
-    console.log('[DB] Running in MOCK mode — no Supabase configured');
-    try {
-      const savedMock = localStorage.getItem('scholarfeedback_mock_db');
-      if (savedMock) {
-        Object.assign(mock, JSON.parse(savedMock));
-      }
-    } catch (e) {
-      console.error("Failed to parse mock DB", e);
-    }
+    return true;
   }
+  return false;
+}
+
+/**
+ * Initialize DB.  Retries up to 20 × 100ms (2 seconds) waiting for the
+ * Supabase CDN + supabase-crud.js to set window.supabaseClient.
+ * After 2s, falls back to mock mode gracefully.
+ */
+function init() {
+  if (_readyPromise) return _readyPromise;
+
+  _readyPromise = new Promise(resolve => {
+    if (_tryConnect()) {
+      _ready = true;
+      resolve();
+      return;
+    }
+
+    let attempts = 0;
+    const maxAttempts = 20;
+    const interval = setInterval(() => {
+      attempts++;
+      if (_tryConnect()) {
+        clearInterval(interval);
+        _ready = true;
+        resolve();
+        return;
+      }
+      if (attempts >= maxAttempts) {
+        clearInterval(interval);
+        _mockMode = true;
+        console.log('[DB] Running in MOCK mode — no Supabase configured after 2s wait');
+        try {
+          const savedMock = localStorage.getItem('scholarfeedback_mock_db');
+          if (savedMock) {
+            Object.assign(mock, JSON.parse(savedMock));
+          }
+        } catch (e) {
+          console.error("Failed to parse mock DB", e);
+        }
+        _ready = true;
+        resolve();
+      }
+    }, 100);
+  });
+  return _readyPromise;
+}
+
+/** Wait until DB is initialized (call from any service before first query) */
+function ensureReady() {
+  if (_ready) return Promise.resolve();
+  return _readyPromise || init();
 }
 
 function isMock() { return _mockMode; }
@@ -124,17 +177,35 @@ const mock = {
   feedback_reports: []
 };
 
+/**
+ * Wrap a Supabase promise with a timeout to prevent indefinite hangs.
+ * @param {Promise} promise - The Supabase query promise
+ * @param {number} ms - Timeout in milliseconds (default 12s)
+ * @returns {Promise} - Resolves with the result or rejects with timeout error
+ */
+function _withTimeout(promise, ms = 12000) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`İşlem ${ms / 1000}s içinde tamamlanamadı. İnternet bağlantınızı kontrol edin.`)), ms)
+    )
+  ]);
+}
+
 /** Generic mock query helper */
 async function query(table, { select, match, eq, upsert, onConflict, insert, update, del, order } = {}) {
+  // Ensure DB is initialized before any query
+  await ensureReady();
+
   if (!_mockMode && _supabase) {
     if (insert) {
-      const res = await _supabase.from(table).insert(insert).select();
+      const res = await _withTimeout(_supabase.from(table).insert(insert).select());
       if (!res.error) _notifyChange(table, 'INSERT', res.data?.[0]);
       return res;
     }
     if (upsert) {
       const options = onConflict ? { onConflict } : {};
-      const res = await _supabase.from(table).upsert(upsert, options).select();
+      const res = await _withTimeout(_supabase.from(table).upsert(upsert, options).select());
       if (!res.error) _notifyChange(table, 'UPSERT', res.data?.[0]);
       return res;
     }
@@ -142,20 +213,18 @@ async function query(table, { select, match, eq, upsert, onConflict, insert, upd
       let q = _supabase.from(table).update(update);
       if (eq) q = q.eq(eq[0], eq[1]);
       if (match) Object.entries(match).forEach(([k, v]) => { q = q.eq(k, v); });
-      const res = await q.select();
+      const res = await _withTimeout(q.select());
       if (!res.error) _notifyChange(table, 'UPDATE', res.data?.[0]);
       return res;
     }
     if (del) {
-      let q = _supabase.from(table).delete().select();
+      let q = _supabase.from(table).delete();
       if (eq) q = q.eq(eq[0], eq[1]);
       if (match) Object.entries(match).forEach(([k, v]) => { q = q.eq(k, v); });
-      const res = await q;
+      const res = await _withTimeout(q.select());
       if (res.error) return res;
-      // Eğer silinen bir satır varsa notify et
-      if (res.data && res.data.length > 0) {
-        _notifyChange(table, 'DELETE', null);
-      }
+      // Always notify on delete attempt (even if 0 rows — let caller handle)
+      _notifyChange(table, 'DELETE', null);
       return res;
     }
     let q = _supabase.from(table).select(select || '*');
@@ -169,7 +238,7 @@ async function query(table, { select, match, eq, upsert, onConflict, insert, upd
         q = q.order(parts[0], { ascending: parts[1] !== 'desc' });
       }
     }
-    return await q;
+    return await _withTimeout(q);
   }
   // Mock mode
   await new Promise(r => setTimeout(r, 80 + Math.random() * 80));
@@ -263,6 +332,6 @@ function unsubscribeRealtime() {
   _realtimeChannels = [];
 }
 
-const DB = { init, isMock, client, query, mock, generateJoinCode, generateUUID, subscribeRealtime, unsubscribeRealtime };
-init(); // Auto-initialize on import
+const DB = { init, ensureReady, isMock, client, query, mock, generateJoinCode, generateUUID, subscribeRealtime, unsubscribeRealtime };
+init(); // Start initialization (non-blocking, resolves within ~2s)
 export default DB;

@@ -109,6 +109,9 @@ Store.subscribe(Store.Events.REFRESH_STUDENT_DATA, (state) => {
 
 // ── Initialize ──
 async function init() {
+  // Wait for Supabase client to be ready (retries up to 2s)
+  await DB.ensureReady();
+
   // Setup Supabase auth state listener (token refresh, session sync)
   Auth.setupAuthListener();
 

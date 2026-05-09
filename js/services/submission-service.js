@@ -1,6 +1,9 @@
 /**
  * ScholarFeedback AI — Submission & Auto-Save Service
  * Supports both Mock and Supabase modes.
+ *
+ * STABILITY FIX: All Supabase operations are wrapped in a single master
+ * timeout.  _findExisting is no longer called outside the timeout boundary.
  */
 import DB from '../supabase-client.js';
 import Store from '../store.js';
@@ -42,27 +45,31 @@ async function _findExisting(taskId, userId) {
 
 /** Refresh submissions in store after a write */
 async function _refreshStore(userId) {
-  if (DB.isMock()) {
-    const subs = DB.mock.submissions.filter(s => s.student_id === userId);
-    const subIds = subs.map(s => s.id);
-    const reports = DB.mock.feedback_reports.filter(r => subIds.includes(r.submission_id));
-    Store.dispatch('REFRESH_STUDENT_DATA', {
-      submissions: subs,
-      feedbackReports: reports
-    });
-    return;
-  }
-  const client = DB.client() || window.supabaseClient;
-  if (!client) return;
-  const { data: subs } = await client.from('submissions').select('*').eq('student_id', userId);
-  if (subs) {
-    const subIds = subs.map(s => s.id);
-    let reports = [];
-    if (subIds.length > 0) {
-      const { data: r } = await client.from('feedback_reports').select('*').in('submission_id', subIds);
-      reports = r || [];
+  try {
+    if (DB.isMock()) {
+      const subs = DB.mock.submissions.filter(s => s.student_id === userId);
+      const subIds = subs.map(s => s.id);
+      const reports = DB.mock.feedback_reports.filter(r => subIds.includes(r.submission_id));
+      Store.dispatch('REFRESH_STUDENT_DATA', {
+        submissions: subs,
+        feedbackReports: reports
+      });
+      return;
     }
-    Store.dispatch('REFRESH_STUDENT_DATA', { submissions: subs, feedbackReports: reports });
+    const client = DB.client() || window.supabaseClient;
+    if (!client) return;
+    const { data: subs } = await client.from('submissions').select('*').eq('student_id', userId);
+    if (subs) {
+      const subIds = subs.map(s => s.id);
+      let reports = [];
+      if (subIds.length > 0) {
+        const { data: r } = await client.from('feedback_reports').select('*').in('submission_id', subIds);
+        reports = r || [];
+      }
+      Store.dispatch('REFRESH_STUDENT_DATA', { submissions: subs, feedbackReports: reports });
+    }
+  } catch (e) {
+    console.warn('[SubmissionService] _refreshStore error (non-critical):', e.message);
   }
 }
 
@@ -99,9 +106,6 @@ const SubmissionService = {
       return;
     }
 
-    const client = DB.client() || window.supabaseClient;
-    if (!client) return;
-
     const payload = {
       task_id: taskId,
       student_id: user.id,
@@ -129,9 +133,8 @@ const SubmissionService = {
   },
 
   /**
-   * Final submit. Pure UPSERT — no pre-flight SELECT needed.
-   * PostgreSQL handles insert-vs-update via UNIQUE(task_id, student_id).
-   * 15s timeout prevents hanging. Always returns true (success) or null (failure).
+   * Final submit.  The ENTIRE flow (find existing → insert/update → refresh)
+   * is wrapped inside a single 15s master timeout so nothing can hang.
    */
   async submitFinal(taskId, content) {
     const user = Store.getState('currentUser');
@@ -142,6 +145,7 @@ const SubmissionService = {
 
     console.log('[Submit] Başlıyor…', { taskId, userId: user.id });
 
+    // ── Mock mode (always fast) ──
     if (DB.isMock()) {
       const existing = DB.mock.submissions.find(s => s.task_id === taskId && s.student_id === user.id);
       const payload = {
@@ -157,53 +161,56 @@ const SubmissionService = {
       return true;
     }
 
-    // ── Supabase mode: pure UPSERT, no pre-flight SELECT ──
-    const client = DB.client() || window.supabaseClient;
-    if (!client) { Store.toast('error', 'Veritabanı bağlantısı kurulamadı.'); return null; }
+    // ── Supabase mode ──
+    // Master timeout wraps the ENTIRE chain: findExisting + insert/update + refreshStore
+    const masterTimeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Bağlantı 15 saniye içinde tamamlanamadı. Lütfen internet bağlantınızı ve Supabase ayarlarını kontrol edin.')), 15000)
+    );
 
-    // Provide a UUID for new inserts. On conflict (existing record), PostgreSQL
-    // Yeniden teslimlerde (UPDATE) mevcut id'nin ezilmemesi ve yeni kayıt eklenecekse (INSERT)
-    // Postgres'in kendi UUID'sini üretebilmesi için id alanını record'a dahil etmiyoruz.
-    const record = {
-      task_id: taskId,
-      student_id: user.id,
-      content,
-      status: 'SUBMITTED',
-      word_count: wordCount,
-      language_detected: detectLanguage(content),
-      submitted_at: now,
-      updated_at: now
-    };
+    const work = async () => {
+      const client = DB.client() || window.supabaseClient;
+      if (!client) throw new Error('Veritabanı bağlantısı kurulamadı.');
 
-    console.log('[Submit] Upsert yapılıyor…');
+      const record = {
+        task_id: taskId,
+        student_id: user.id,
+        content,
+        status: 'SUBMITTED',
+        word_count: wordCount,
+        language_detected: detectLanguage(content),
+        submitted_at: now,
+        updated_at: now
+      };
 
-    try {
+      // Step 1: Check for existing submission
+      console.log('[Submit] Mevcut kayıt kontrol ediliyor…');
       const existing = await _findExisting(taskId, user.id);
-      
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Bağlantı 15 saniye içinde tamamlanamadı. Lütfen internet bağlantınızı ve Supabase ayarlarını kontrol edin.')), 15000)
-      );
 
-      let operationPromise;
+      // Step 2: Insert or Update
+      let res;
       if (existing) {
-        operationPromise = DB.query('submissions', { update: record, eq: ['id', existing.id] });
+        console.log('[Submit] Güncelleniyor (UPDATE)…', existing.id);
+        res = await DB.query('submissions', { update: record, eq: ['id', existing.id] });
       } else {
-        operationPromise = DB.query('submissions', { insert: { ...record, id: DB.generateUUID() } });
+        console.log('[Submit] Yeni kayıt ekleniyor (INSERT)…');
+        res = await DB.query('submissions', { insert: { ...record, id: DB.generateUUID() } });
       }
 
-      const res = await Promise.race([operationPromise, timeoutPromise]);
-      
       if (res && res.error) {
-        console.error('[Submit] Supabase hatası:', res.error);
-        Store.toast('error', 'Teslim edilemedi: ' + (res.error.message || 'Veritabanı hatası'));
-        return null;
+        throw new Error(res.error.message || 'Veritabanı hatası');
       }
 
       console.log('[Submit] Başarılı ✓', res ? res.data : null);
-      // DB.query automatically calls _notifyChange which triggers DATA_CHANGED
-      await _refreshStore(user.id);
-      return true;
 
+      // Step 3: Refresh store (non-blocking — don't let a failure here kill success)
+      try { await _refreshStore(user.id); } catch (e) { console.warn('[Submit] Refresh sonrası hata (önemsiz):', e); }
+
+      return true;
+    };
+
+    try {
+      const result = await Promise.race([work(), masterTimeout]);
+      return result;
     } catch (err) {
       console.error('[Submit] İstisna:', err.message);
       Store.toast('error', 'Teslim edilemedi: ' + err.message);
